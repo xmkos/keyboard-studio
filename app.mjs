@@ -352,9 +352,12 @@ $('undo').addEventListener('click',()=>{if(!history.length)return;redoHistory.pu
 $('redo').addEventListener('click',()=>{if(!redoHistory.length)return;history.push(snapshot());restoreSnapshot(redoHistory.pop());status('Зміни редактора повторено.');});
 $('refresh').addEventListener('click',()=>refresh());
 $('connect').addEventListener('click',()=>refresh());
-async function shareText(text){try{await navigator.clipboard.writeText(text);status('Діагностику скопійовано. Встав її в повідомлення автору.','success');}catch{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type:'text/plain'}));a.download='keyboard-studio-diagnostics.txt';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);status('Діагностику збережено як файл. Надішли його автору.','success');}}
+function shareText(text){$('share-text').value=text;$('share-copy').textContent='Скопіювати';$('share-dialog').showModal();$('share-text').select();}
+$('share-copy').addEventListener('click',async()=>{try{await navigator.clipboard.writeText($('share-text').value);}catch{$('share-text').select();document.execCommand('copy');}$('share-copy').textContent='Скопійовано';});
+$('share-save').addEventListener('click',()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([$('share-text').value],{type:'text/plain'}));a.download='keyboard-studio-diagnostics.txt';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);});
+$('share-close').addEventListener('click',()=>$('share-dialog').close());
 $('copy-diagnostics').addEventListener('click',async()=>shareText(await diagnostics()));
-for(const id of ['inspect-device','inspect-device-help'])$(id).addEventListener('click',async()=>{try{await shareText(await inspect());}catch(error){status(error.message,'error');}});
+for(const id of ['inspect-device','inspect-device-help'])$(id).addEventListener('click',async()=>{status('Вибери свою клавіатуру у вікні браузера…');try{shareText(await inspect());status('Дані зібрано. Скопіюй їх і надішли автору.','success');}catch(error){status(error.message,'error');}});
 $('download-backup').addEventListener('click',()=>{const name=$('backups').value,text=backupText(name);if(!text)return;const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type:'application/json'}));a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);});
 $('import-backup').addEventListener('click',()=>$('backup-input').click());
 $('backup-input').addEventListener('change',async()=>{const file=$('backup-input').files[0];$('backup-input').value='';if(!file||file.size>2_000_000)return;try{const name=importBackup(await file.text());$('backups').add(new Option(name,name));$('backups').value=name;$('restore').disabled=!state?.connected;status('Резервну копію додано до цього браузера.','success');}catch(error){status(`Не вдалося додати копію: ${error.message}`,'error');}});

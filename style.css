@@ -87,3 +87,9 @@
 
 .connect-other{flex:1 0 100%;order:4;margin-top:8px;min-height:34px;font-size:11px}
 .connect-other[hidden]{display:none}
+.share-dialog{width:min(640px,92vw);background:#212426;color:#e9eaeb;border:1px solid #303437;border-radius:14px;padding:20px}
+.share-dialog::backdrop{background:#000a}
+.share-dialog h2{margin:0 0 8px;font-size:16px}
+.share-dialog p{margin:0 0 12px;color:var(--muted);line-height:1.45}
+.share-dialog textarea{width:100%;box-sizing:border-box;background:#181a1b;color:#cfd4d6;border:1px solid #303437;border-radius:9px;padding:10px;font:11px/1.4 Consolas,monospace;resize:vertical}
+.share-actions{display:flex;gap:10px;align-items:center;margin-top:12px}

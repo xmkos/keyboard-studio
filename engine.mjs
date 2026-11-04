@@ -52,8 +52,9 @@ export async function connect(prompt){
 const reportInfo=r=>`id${r.reportId}[${(r.items||[]).map(i=>`up=${(i.usagePage||0).toString(16)} u=${(i.usages||[]).slice(0,4).map(u=>u.toString(16)).join('/')} ${i.reportSize}x${i.reportCount}`).join('; ')}]`;
 export async function inspect(){
   if(!hidSupported())throw new Error('Цей браузер не вміє працювати з USB HID. Відкрий сторінку в Chrome або Edge на комп’ютері.');
-  const picked=await navigator.hid.requestDevice({filters:[]});
-  if(!picked.length)throw new Error('Пристрій не вибрано.');
+  let picked=[];
+  try{picked=await navigator.hid.requestDevice({filters:[]});}catch(e){log('inspect',`picker: ${e.name}: ${e.message}`);}
+  if(!picked.length)log('inspect','no device chosen (the list was empty or cancelled)');
   for(const d of picked){
     log('inspect',describe(d));
     const wasOpen=d.opened;
