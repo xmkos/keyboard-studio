@@ -48,6 +48,27 @@ export async function connect(prompt){
     getFeature:async()=>{const v=await timeout(dev.receiveFeatureReport(0),4000);const a=new Uint8Array(v.buffer,v.byteOffset,v.byteLength);return a.length===65?a.slice(1):a;}
   },{report,trace:(k,b)=>log(k,hex(b))});
 }
+// Read-only look at any HID device (any brand): descriptor layout plus a GET_FEATURE of each listed report. Nothing is written.
+const reportInfo=r=>`id${r.reportId}[${(r.items||[]).map(i=>`up=${(i.usagePage||0).toString(16)} u=${(i.usages||[]).slice(0,4).map(u=>u.toString(16)).join('/')} ${i.reportSize}x${i.reportCount}`).join('; ')}]`;
+export async function inspect(){
+  if(!hidSupported())throw new Error('Цей браузер не вміє працювати з USB HID. Відкрий сторінку в Chrome або Edge на комп’ютері.');
+  const picked=await navigator.hid.requestDevice({filters:[]});
+  if(!picked.length)throw new Error('Пристрій не вибрано.');
+  for(const d of picked){
+    log('inspect',describe(d));
+    const wasOpen=d.opened;
+    try{if(!wasOpen)await d.open();}catch(e){log('inspect',`open failed: ${e.message}`);continue;}
+    for(const c of d.collections){
+      log('inspect',`collection usagePage=${c.usagePage.toString(16)} usage=${c.usage.toString(16)} in=[${(c.inputReports||[]).map(reportInfo)}] out=[${(c.outputReports||[]).map(reportInfo)}] feature=[${(c.featureReports||[]).map(reportInfo)}]`);
+      for(const r of c.featureReports||[]){
+        try{const v=await timeout(d.receiveFeatureReport(r.reportId),2000);log('inspect',`GET_FEATURE id${r.reportId} (${v.byteLength}B): ${hex(new Uint8Array(v.buffer,v.byteOffset,v.byteLength))}`);}
+        catch(e){log('inspect',`GET_FEATURE id${r.reportId} failed: ${e.message}`);}
+      }
+    }
+    if(!wasOpen)await d.close().catch(()=>{});
+  }
+  return diagnostics();
+}
 export function watchDevice(onChange){
   if(!hidSupported())return;
   navigator.hid.addEventListener('disconnect',e=>{log('event','disconnect');if(e.device===dev){dev=null;hid=null;onChange();}});
