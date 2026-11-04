@@ -93,3 +93,11 @@
 .share-dialog p{margin:0 0 12px;color:var(--muted);line-height:1.45}
 .share-dialog textarea{width:100%;box-sizing:border-box;background:#181a1b;color:#cfd4d6;border:1px solid #303437;border-radius:9px;padding:10px;font:11px/1.4 Consolas,monospace;resize:vertical}
 .share-actions{display:flex;gap:10px;align-items:center;margin-top:12px}
+.mchose-dialog{width:min(1000px,96vw);max-height:92vh;overflow:auto}
+.mchose-profiles{display:flex;gap:8px;margin:8px 0 12px}
+.mchose-scroll{overflow-x:auto;padding:4px 0 8px}
+.mchose-board{position:relative}
+.mc-key{position:absolute;box-sizing:border-box;border:1px solid #3a3f42;border-radius:6px;background:color-mix(in srgb,#5a49d6 calc(var(--t,0) * 100%),#2a2e30);color:#e9eaeb;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;padding:0;font-size:10px;cursor:pointer}
+.mc-key small{font-size:9px;color:#d8dcde;font-variant-numeric:tabular-nums}
+.mc-key.selected{outline:2px solid var(--accent);outline-offset:1px}
+.mchose-detail{min-height:2.8em;color:#e9eaeb!important}

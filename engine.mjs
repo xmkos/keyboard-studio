@@ -11,6 +11,7 @@ import {buildPicture} from './picture.mjs';
 import {buildMainLed} from './options.mjs';
 import {macroReferences,planMacros} from './macro.mjs';
 import {createDevice,czFrame} from './hid.mjs';
+import {decodeMchose} from './mchose.mjs';
 
 // Any 0x3151 (YUNZII) device is offered, so a friend with another model can still connect and send a log. Writes stay locked to RT80 (model 2068) in hid.mjs.
 const FILTERS=[{vendorId:0x3151}];
@@ -73,7 +74,9 @@ export async function czRead(d,cmd,offset,size){
   }
   return {bytes:out};
 }
+let lastMchose=null;
 async function dumpMchose(d){
+  const got={};
   const regions=[['info',3,0,56],['base',4,0,56]];
   for(let p=0;p<5;p++)regions.push([`func-config profile${p}`,5,64*p,64]);
   for(let p=0;p<5;p++)regions.push([`key-trigger profile${p}`,160,1024*p,1024]);
@@ -84,10 +87,13 @@ async function dumpMchose(d){
     onProgress({busy:true,step:1,steps:1,pct:Math.round(100*i/regions.length),text:`Читаю клавіатуру: ${name}`});
     const r=await czRead(d,cmd,off,size);
     log('dump',`${name} (cmd ${cmd} off ${off} size ${size}) got ${r.bytes.length}${r.error?` ERROR ${r.error}`:''}: ${hexAll(r.bytes)}`);
+    got[name]=r.bytes;
     if(r.error&&++bad>=4){log('dump','stopped: too many regions without reply');break;}
   }
+  return got;
 }
 export async function inspect(){
+  lastMchose=null;
   if(!hidSupported())throw new Error('Цей браузер не вміє працювати з USB HID. Відкрий сторінку в Chrome або Edge на комп’ютері.');
   let picked=[];
   try{picked=await navigator.hid.requestDevice({filters:[]});}catch(e){log('inspect',`picker: ${e.name}: ${e.message}`);}
@@ -103,10 +109,10 @@ export async function inspect(){
         catch(e){log('inspect',`GET_FEATURE id${r.reportId} failed: ${e.message}`);}
       }
     }
-    if(d.vendorId===0x41e4&&d.collections.some(c=>c.usagePage===1&&c.usage===0&&(c.outputReports||[]).length))await dumpMchose(d);
+    if(d.vendorId===0x41e4&&d.collections.some(c=>c.usagePage===1&&c.usage===0&&(c.outputReports||[]).length))lastMchose=await dumpMchose(d);
     if(!wasOpen)await d.close().catch(()=>{});
   }
-  return diagnostics();
+  return {text:await diagnostics(),mchose:lastMchose?decodeMchose(lastMchose):null};
 }
 export function watchDevice(onChange){
   if(!hidSupported())return;

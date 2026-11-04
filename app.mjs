@@ -352,12 +352,38 @@ $('undo').addEventListener('click',()=>{if(!history.length)return;redoHistory.pu
 $('redo').addEventListener('click',()=>{if(!redoHistory.length)return;history.push(snapshot());restoreSnapshot(redoHistory.pop());status('Зміни редактора повторено.');});
 $('refresh').addEventListener('click',()=>refresh());
 $('connect').addEventListener('click',()=>refresh());
+let mchoseText='';
+function showMchose(d,text){
+  mchoseText=text;const U=44;
+  $('mchose-meta').textContent='Прошивка '+d.firmware+(d.build?' · збірка '+d.build:'')+' · '+d.profiles.length+' профілі (номер активного профілю з даних не визначено)';
+  const box=$('mchose-profiles'),board=$('mchose-board'),detail=$('mchose-detail');
+  board.style.width=16*U+'px';board.style.height=5*U+'px';
+  const mm=v=>v.toFixed(2);
+  function draw(i){
+    [...box.children].forEach((b,j)=>b.className=j===i?'button primary':'button subtle');
+    board.replaceChildren();
+    d.profiles[i].rows.forEach((row,r)=>row.forEach(k=>{
+      const el=document.createElement('button');el.type='button';el.className='mc-key';
+      el.style.left=k.x*U+'px';el.style.top=r*U+'px';el.style.width=k.w*U-4+'px';el.style.height=U-4+'px';
+      const t=k.travel;el.style.setProperty('--t',t?Math.min(1,Math.max(0,(t.actuation-0.1)/3.9)):0);
+      const label=document.createElement('b');label.textContent=k.label;const val=document.createElement('small');val.textContent=t?mm(t.actuation):'–';
+      el.append(label,val);
+      el.addEventListener('click',()=>{board.querySelector('.selected')?.classList.remove('selected');el.classList.add('selected');detail.textContent=t?k.label+': спрацювання '+mm(t.actuation)+' мм · RT натискання '+mm(t.rtPress)+' / відпускання '+mm(t.rtRelease)+' мм · мертва зона '+mm(t.pressDeadzone)+' / '+mm(t.releaseDeadzone)+' мм · режим '+t.keyMode+(t.keyMode===1?' (імовірно Rapid Trigger)':''):k.label+': даних немає';});
+      board.append(el);
+    }));
+  }
+  box.replaceChildren();
+  d.profiles.forEach((p,i)=>{const b=document.createElement('button');b.type='button';b.textContent='Профіль '+(p.index+1);b.addEventListener('click',()=>draw(i));box.append(b);});
+  draw(0);$('mchose-dialog').showModal();
+}
+$('mchose-share').addEventListener('click',()=>{$('mchose-dialog').close();shareText(mchoseText);});
+$('mchose-close').addEventListener('click',()=>$('mchose-dialog').close());
 function shareText(text){$('share-text').value=text;$('share-copy').textContent='Скопіювати';$('share-dialog').showModal();$('share-text').select();}
 $('share-copy').addEventListener('click',async()=>{try{await navigator.clipboard.writeText($('share-text').value);}catch{$('share-text').select();document.execCommand('copy');}$('share-copy').textContent='Скопійовано';});
 $('share-save').addEventListener('click',()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([$('share-text').value],{type:'text/plain'}));a.download='keyboard-studio-diagnostics.txt';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);});
 $('share-close').addEventListener('click',()=>$('share-dialog').close());
 $('copy-diagnostics').addEventListener('click',async()=>shareText(await diagnostics()));
-for(const id of ['inspect-device','inspect-device-help'])$(id).addEventListener('click',async()=>{status('Вибери свою клавіатуру у вікні браузера…');try{shareText(await inspect());status('Дані зібрано. Скопіюй їх і надішли автору.','success');}catch(error){status(error.message,'error');}finally{$('progress').hidden=true;}});
+for(const id of ['inspect-device','inspect-device-help'])$(id).addEventListener('click',async()=>{status('Вибери свою клавіатуру у вікні браузера…');try{const r=await inspect();if(r.mchose){showMchose(r.mchose,r.text);status('Клавіатуру зчитано. Подивись значення й порівняй із M HUB.','success');}else{shareText(r.text);status('Дані зібрано. Скопіюй їх і надішли автору.','success');}}catch(error){status(error.message,'error');}finally{$('progress').hidden=true;}});
 $('download-backup').addEventListener('click',()=>{const name=$('backups').value,text=backupText(name);if(!text)return;const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type:'application/json'}));a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);});
 $('import-backup').addEventListener('click',()=>$('backup-input').click());
 $('backup-input').addEventListener('change',async()=>{const file=$('backup-input').files[0];$('backup-input').value='';if(!file||file.size>2_000_000)return;try{const name=importBackup(await file.text());$('backups').add(new Option(name,name));$('backups').value=name;$('restore').disabled=!state?.connected;status('Резервну копію додано до цього браузера.','success');}catch(error){status(`Не вдалося додати копію: ${error.message}`,'error');}});
@@ -553,3 +579,4 @@ window.addEventListener('blur',()=>document.querySelectorAll('.testing').forEach
 setProgressHandler(showProgress);
 watchDevice(()=>refresh(true));
 renderLibrary();renderEditor();updateOutputs();renderRgb();refresh(true);
+
