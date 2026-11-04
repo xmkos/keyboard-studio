@@ -74,7 +74,8 @@ export async function czRead(d,cmd,offset,size){
   }
   return {bytes:out};
 }
-let lastMchose=null;
+let lastMchose=null,mdev=null;
+export const useMchoseDevice=(d,regions)=>{mdev=d;if(regions)lastMchose=regions;};
 async function dumpMchose(d){
   const got={};
   const regions=[['info',3,0,56],['base',4,0,56]];
@@ -91,6 +92,70 @@ async function dumpMchose(d){
     if(r.error&&++bad>=4){log('dump','stopped: too many regions without reply');break;}
   }
   return got;
+}
+// ---- MCHOSE write: one key's actuation. Backup first, 56-byte window write (the vendor driver never sends partial packets), read back and compare. ----
+const MB='ks-mchose:';
+const mchoseBackups=profile=>Object.keys(localStorage).filter(k=>k.startsWith(MB+profile+':')).sort();
+function saveMchoseBackup(profile,bytes){
+  const key=MB+profile+':'+new Date().toISOString().replace(/[:.]/g,'-');
+  try{localStorage.setItem(key,JSON.stringify({format:'mchose-trigger-backup',version:1,profile,createdAt:new Date().toISOString(),bytes}));}
+  catch{throw new Error('Не вдалося зберегти резервну копію (браузер не дає місця). Запис скасовано.');}
+  for(const old of mchoseBackups(profile).slice(0,-6))localStorage.removeItem(old);
+  return key.slice(MB.length);
+}
+async function czWrite(d,cmd,offset,data){
+  const frame=czFrame(cmd,data.length,offset,data);
+  let u=await exchange(d,frame,cmd);
+  if(!u)u=await exchange(d,frame,cmd);
+  if(!u)throw new Error('Клавіатура не підтвердила запис.');
+}
+// Writes every 8-byte key record that differs between oldB and newB (1024 bytes of one profile), each inside a 56-byte window of the new data.
+async function writeTrigger(d,profile,oldB,newB){
+  for(let i=0;i<128;i++){
+    if(oldB.slice(i*8,i*8+8).every((b,j)=>b===newB[i*8+j]))continue;
+    const start=Math.min(i*8,1024-56);
+    await czWrite(d,161,1024*profile+start,newB.slice(start,start+56));
+    await new Promise(r=>setTimeout(r,30));
+  }
+}
+const trigRegion=profile=>czRead(mdev,160,1024*profile,1024);
+async function mchoseVerified(profile,expected){
+  const after=await trigRegion(profile);
+  if(after.error||after.bytes.length!==1024||after.bytes.some((b,i)=>b!==expected[i]))throw new Error('Перевірка запису не пройшла: значення на клавіатурі не збігаються з записаними.');
+  lastMchose[`key-trigger profile${profile}`]=after.bytes;
+  return decodeMchose(lastMchose);
+}
+export async function mchoseSetActuation(profile,keyIndex,mm){
+  if(!Number.isInteger(profile)||profile<0||profile>3||!Number.isInteger(keyIndex)||keyIndex<0||keyIndex>79)throw new Error('Некоректна клавіша або профіль.');
+  if(typeof mm!=='number'||!(mm>=0.2&&mm<=3.5)||Math.abs(mm*100-Math.round(mm*100))>1e-6)throw new Error('Спрацювання: від 0,20 до 3,50 мм із кроком 0,01.');
+  return exclusive(async()=>{
+    if(!mdev?.opened||!lastMchose)throw new Error('Спершу зчитай клавіатуру кнопкою «Інший бренд?».');
+    onProgress({busy:true,step:1,steps:3,pct:0,text:'Читаю профіль'});
+    const cur=await trigRegion(profile);
+    if(cur.error||cur.bytes.length!==1024)throw new Error('Не вдалося зчитати профіль перед записом.');
+    const rec=cur.bytes.slice(keyIndex*8,keyIndex*8+8);
+    if((rec[0]&0xf0)!==0xa0)throw new Error('Запис клавіші має невідомий формат. Запис заблоковано.');
+    const next=cur.bytes.slice(),v=Math.round(mm*100)-1;
+    next[keyIndex*8+2]=v&255;next[keyIndex*8+3]=(rec[3]&~1)|(v>>8&1);
+    onProgress({busy:true,step:2,steps:3,pct:0,text:'Створюю резервну копію'});
+    const backup=saveMchoseBackup(profile,cur.bytes);
+    onProgress({busy:true,step:3,steps:3,pct:0,text:'Записую на клавіатуру'});
+    try{await writeTrigger(mdev,profile,cur.bytes,next);return {backup,mchose:await mchoseVerified(profile,next)};}
+    catch(e){log('error','mchose write: '+e.message);throw new Error(e.message+' Резервна копія: '+backup);}
+  });
+}
+export async function mchoseRestore(profile){
+  return exclusive(async()=>{
+    if(!mdev?.opened||!lastMchose)throw new Error('Спершу зчитай клавіатуру кнопкою «Інший бренд?».');
+    const name=mchoseBackups(profile).at(-1);
+    if(!name)throw new Error('Для цього профілю немає резервної копії.');
+    const saved=JSON.parse(localStorage.getItem(name));
+    if(saved.format!=='mchose-trigger-backup'||saved.profile!==profile||saved.bytes.length!==1024)throw new Error('Пошкоджена резервна копія.');
+    const cur=await trigRegion(profile);
+    if(cur.error||cur.bytes.length!==1024)throw new Error('Не вдалося зчитати профіль перед відновленням.');
+    await writeTrigger(mdev,profile,cur.bytes,saved.bytes);
+    return {backup:name.slice(MB.length),mchose:await mchoseVerified(profile,saved.bytes)};
+  });
 }
 export async function inspect(){
   lastMchose=null;
@@ -109,7 +174,7 @@ export async function inspect(){
         catch(e){log('inspect',`GET_FEATURE id${r.reportId} failed: ${e.message}`);}
       }
     }
-    if(d.vendorId===0x41e4&&d.collections.some(c=>c.usagePage===1&&c.usage===0&&(c.outputReports||[]).length))lastMchose=await dumpMchose(d);
+    if(d.vendorId===0x41e4&&d.collections.some(c=>c.usagePage===1&&c.usage===0&&(c.outputReports||[]).length)){lastMchose=await dumpMchose(d);mdev=d;continue;}
     if(!wasOpen)await d.close().catch(()=>{});
   }
   return {text:await diagnostics(),mchose:lastMchose?decodeMchose(lastMchose):null};

@@ -32,7 +32,7 @@ export function decodeMchose(regions){
     if(!trig||!mat)continue;
     const travel=decodeTrigger(trig),hids=matrixHids(mat),byHid=new Map();
     hids.forEach((h,i)=>{if(h!=null&&!byHid.has(h))byHid.set(h,i);});
-    profiles.push({index:p,rows:ROWS.map(row=>row.map(([hid,label,x,w])=>({hid,label,x,w,travel:byHid.has(hid)?travel[byHid.get(hid)]||null:null})))});
+    profiles.push({index:p,rows:ROWS.map(row=>row.map(([hid,label,x,w])=>({hid,label,x,w,index:byHid.has(hid)?byHid.get(hid):null,travel:byHid.has(hid)?travel[byHid.get(hid)]||null:null})))});
   }
   if(!profiles.length)return null;
   const text=info?String.fromCharCode(...info.slice(2).filter(c=>c>=32&&c<127)).trim():'';

@@ -1,7 +1,7 @@
 import { convertWootingProfile, parseWootingCode } from './wooting.mjs';
 import { RT80_LIGHT_EFFECTS } from './rgb.mjs';
 import { validateNative } from './profiles.mjs';
-import { call, wooting, hidSupported, setProgressHandler, watchDevice, backupText, importBackup, diagnostics, inspect } from './engine.mjs';
+import { call, wooting, hidSupported, setProgressHandler, watchDevice, backupText, importBackup, diagnostics, inspect, mchoseSetActuation, mchoseRestore } from './engine.mjs';
 import {encodeMacroEvents} from './macro.mjs';
 
 const $ = id => document.getElementById(id);
@@ -352,30 +352,43 @@ $('undo').addEventListener('click',()=>{if(!history.length)return;redoHistory.pu
 $('redo').addEventListener('click',()=>{if(!redoHistory.length)return;history.push(snapshot());restoreSnapshot(redoHistory.pop());status('Зміни редактора повторено.');});
 $('refresh').addEventListener('click',()=>refresh());
 $('connect').addEventListener('click',()=>refresh());
-let mchoseText='';
-function showMchose(d,text){
-  mchoseText=text;const U=44;
+let mchoseText='',mc=null;
+const mm2=v=>v.toFixed(2);
+function showMchose(d,text){mchoseText=text;mc={d,profile:0,key:null};$('mchose-write-status').textContent='';buildMchose();$('mchose-dialog').showModal();}
+function buildMchose(){
+  const U=44,d=mc.d,box=$('mchose-profiles'),board=$('mchose-board'),detail=$('mchose-detail');
   $('mchose-meta').textContent='Прошивка '+d.firmware+(d.build?' · збірка '+d.build:'')+' · '+d.profiles.length+' профілі (номер активного профілю з даних не визначено)';
-  const box=$('mchose-profiles'),board=$('mchose-board'),detail=$('mchose-detail');
   board.style.width=16*U+'px';board.style.height=5*U+'px';
-  const mm=v=>v.toFixed(2);
-  function draw(i){
-    [...box.children].forEach((b,j)=>b.className=j===i?'button primary':'button subtle');
-    board.replaceChildren();
-    d.profiles[i].rows.forEach((row,r)=>row.forEach(k=>{
-      const el=document.createElement('button');el.type='button';el.className='mc-key';
-      el.style.left=k.x*U+'px';el.style.top=r*U+'px';el.style.width=k.w*U-4+'px';el.style.height=U-4+'px';
-      const t=k.travel;el.style.setProperty('--t',t?Math.min(1,Math.max(0,(t.actuation-0.1)/3.9)):0);
-      const label=document.createElement('b');label.textContent=k.label;const val=document.createElement('small');val.textContent=t?mm(t.actuation):'–';
-      el.append(label,val);
-      el.addEventListener('click',()=>{board.querySelector('.selected')?.classList.remove('selected');el.classList.add('selected');detail.textContent=t?k.label+': спрацювання '+mm(t.actuation)+' мм · RT натискання '+mm(t.rtPress)+' / відпускання '+mm(t.rtRelease)+' мм · мертва зона '+mm(t.pressDeadzone)+' / '+mm(t.releaseDeadzone)+' мм · режим '+t.keyMode+(t.keyMode===1?' (імовірно Rapid Trigger)':''):k.label+': даних немає';});
-      board.append(el);
-    }));
-  }
   box.replaceChildren();
-  d.profiles.forEach((p,i)=>{const b=document.createElement('button');b.type='button';b.textContent='Профіль '+(p.index+1);b.addEventListener('click',()=>draw(i));box.append(b);});
-  draw(0);$('mchose-dialog').showModal();
+  d.profiles.forEach((p,i)=>{const b=document.createElement('button');b.type='button';b.textContent='Профіль '+(p.index+1);b.className=i===mc.profile?'button primary':'button subtle';b.addEventListener('click',()=>{mc.profile=i;mc.key=null;buildMchose();});box.append(b);});
+  board.replaceChildren();
+  d.profiles[mc.profile].rows.forEach((row,r)=>row.forEach(k=>{
+    const el=document.createElement('button');el.type='button';el.className='mc-key';
+    el.style.left=k.x*U+'px';el.style.top=r*U+'px';el.style.width=k.w*U-4+'px';el.style.height=U-4+'px';
+    const t=k.travel;el.style.setProperty('--t',t?Math.min(1,Math.max(0,(t.actuation-0.1)/3.9)):0);
+    const label=document.createElement('b');label.textContent=k.label;const val=document.createElement('small');val.textContent=t?mm2(t.actuation):'–';
+    el.append(label,val);
+    if(mc.key&&mc.key.hid===k.hid&&mc.key.label===k.label)el.classList.add('selected');
+    el.addEventListener('click',()=>{mc.key=k;buildMchose();});
+    board.append(el);
+  }));
+  const k=mc.key,t=k?.travel;
+  detail.textContent=!k?'Натисни клавішу, щоб побачити її значення. Число на клавіші: глибина спрацювання, мм.':t?k.label+': спрацювання '+mm2(t.actuation)+' мм · RT натискання '+mm2(t.rtPress)+' / відпускання '+mm2(t.rtRelease)+' мм · мертва зона '+mm2(t.pressDeadzone)+' / '+mm2(t.releaseDeadzone)+' мм · режим '+t.keyMode+(t.keyMode===1?' (імовірно Rapid Trigger)':''):k.label+': даних немає';
+  $('mchose-act').disabled=$('mchose-apply').disabled=!t||k.index===null;
+  if(t)$('mchose-act').value=mm2(t.actuation);
 }
+async function mchoseRun(label,fn){
+  const buttons=['mchose-apply','mchose-restore'].map($);buttons.forEach(b=>b.disabled=true);$('mchose-write-status').textContent=label+'… Не відключай клавіатуру.';
+  try{const r=await fn();mc.d=r.mchose;buildMchose();$('mchose-write-status').textContent='Готово, значення перевірено. Резервна копія: '+r.backup;}
+  catch(error){$('mchose-write-status').textContent='Помилка: '+error.message;}
+  finally{$('mchose-restore').disabled=false;$('mchose-apply').disabled=$('mchose-act').disabled;}
+}
+$('mchose-write').addEventListener('submit',event=>{
+  event.preventDefault();if(!mc?.key)return;const mm=Number($('mchose-act').value);
+  if(!confirm('Записати спрацювання '+mm2(mm)+' мм для клавіші '+mc.key.label+' у профіль '+(mc.profile+1)+'? Перед записом буде створено резервну копію. Функція експериментальна.'))return;
+  mchoseRun('Записую',()=>mchoseSetActuation(mc.profile,mc.key.index,mm));
+});
+$('mchose-restore').addEventListener('click',()=>{if(!confirm('Відновити останню резервну копію профілю '+(mc.profile+1)+'? Значення профілю буде перезаписано.'))return;mchoseRun('Відновлюю',()=>mchoseRestore(mc.profile));});
 $('mchose-share').addEventListener('click',()=>{$('mchose-dialog').close();shareText(mchoseText);});
 $('mchose-close').addEventListener('click',()=>$('mchose-dialog').close());
 function shareText(text){$('share-text').value=text;$('share-copy').textContent='Скопіювати';$('share-dialog').showModal();$('share-text').select();}
@@ -579,4 +592,5 @@ window.addEventListener('blur',()=>document.querySelectorAll('.testing').forEach
 setProgressHandler(showProgress);
 watchDevice(()=>refresh(true));
 renderLibrary();renderEditor();updateOutputs();renderRgb();refresh(true);
+
 

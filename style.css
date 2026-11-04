@@ -101,3 +101,6 @@
 .mc-key small{font-size:9px;color:#d8dcde;font-variant-numeric:tabular-nums}
 .mc-key.selected{outline:2px solid var(--accent);outline-offset:1px}
 .mchose-detail{min-height:2.8em;color:#e9eaeb!important}
+.mchose-write{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:8px 0}
+.mchose-write label{flex:1 0 100%;color:var(--muted)}
+.mchose-write input{width:110px;background:#181a1b;color:#e9eaeb;border:1px solid #303437;border-radius:8px;padding:8px}

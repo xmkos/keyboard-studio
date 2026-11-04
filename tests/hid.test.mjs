@@ -112,3 +112,40 @@ test('czRead reads a region in 56-byte chunks and retries a lost reply',async()=
   assert.equal(r.error,undefined);assert.equal(r.bytes.length,130);
   assert.deepEqual(r.bytes,Array.from({length:130},(_,i)=>byteAt(160,1024+i)));
 });
+
+test('MCHOSE actuation write: backup, 56-byte window, verify, restore',async()=>{
+  const {readFileSync}=await import('node:fs');
+  const {parseDumpText,decodeMchose}=await import('../mchose.mjs');
+  const eng=await import('../engine.mjs');
+  const store=new Map();
+  Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{setItem:(k,v)=>store.set(k,v),getItem:k=>store.get(k)??null,removeItem:k=>store.delete(k),get length(){return store.size;},key:i=>[...store.keys()][i],__keys:()=>[...store.keys()]}});
+  // Object.keys(localStorage) must list the stored keys
+  const keysOf=Object.keys;Object.keys=o=>o===globalThis.localStorage?[...store.keys()]:keysOf(o);
+  const regions=parseDumpText(readFileSync(new URL('./ace68ii-dump.txt',import.meta.url),'utf8'));
+  const mem=[];for(let p=0;p<4;p++)mem.push(...regions[`key-trigger profile${p}`]);
+  const original=mem.slice();let listeners=[],writes=[];
+  const dev={opened:true,
+    addEventListener(n,f){listeners.push(f);},removeEventListener(n,f){listeners=listeners.filter(x=>x!==f);},
+    async sendReport(id,f){
+      const [cmd,size,lo,hi]=[f[1],f[4],f[5],f[6]],off=lo|hi<<8;
+      let sum=size+lo+hi;for(let i=0;i<size;i++)sum+=f[8+i];assert.equal(f[3],sum&255);
+      const r=new Uint8Array(64);r.set([0xaa,cmd,0,0,size,lo,hi,0]);
+      if(cmd===160)for(let i=0;i<size;i++)r[8+i]=mem[off+i];
+      else if(cmd===161){writes.push({off,size});assert.equal(size,56);assert.equal(off%8,0);assert.ok(off+size<=4096);for(let i=0;i<size;i++)mem[off+i]=f[8+i];}
+      queueMicrotask(()=>listeners.slice().forEach(l=>l({data:new DataView(r.buffer)})));
+    }};
+  eng.useMchoseDevice(dev,regions);
+  const before=decodeMchose(regions),w=before.profiles[1].rows.flat().find(k=>k.label==='W');
+  const res=await eng.mchoseSetActuation(1,w.index,0.9);
+  const after=res.mchose.profiles[1].rows.flat().find(k=>k.label==='W');
+  assert.equal(after.travel.actuation,0.9);
+  assert.equal(after.travel.rtPress,w.travel.rtPress);
+  const changed=mem.map((b,i)=>b!==original[i]?i:-1).filter(i=>i>=0);
+  assert.ok(changed.every(i=>i>=1024+w.index*8&&i<1024+w.index*8+8),'only that key record changed');
+  assert.equal(writes.length,1);assert.ok(res.backup);
+  await assert.rejects(()=>eng.mchoseSetActuation(1,w.index,9),/Спрацювання/);
+  const back=await eng.mchoseRestore(1);
+  assert.deepEqual(mem,original);
+  assert.equal(back.mchose.profiles[1].rows.flat().find(k=>k.label==='W').travel.actuation,w.travel.actuation);
+  Object.keys=keysOf;
+});
