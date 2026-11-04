@@ -85,5 +85,5 @@
 .key-meta,output,#progress-pct,#selection-count{font-variant-numeric:tabular-nums}
 @media(max-width:600px){.key{font-size:7px;padding:5px 3px}}
 
-.connect-other{flex:1 0 100%;order:4;margin-top:6px;font-size:11px;text-align:left}
+.connect-other{flex:1 0 100%;order:4;margin-top:8px;min-height:34px;font-size:11px}
 .connect-other[hidden]{display:none}
