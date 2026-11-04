@@ -1,7 +1,7 @@
 import { convertWootingProfile, parseWootingCode } from './wooting.mjs';
 import { RT80_LIGHT_EFFECTS } from './rgb.mjs';
 import { validateNative } from './profiles.mjs';
-import { call, wooting, hidSupported, setProgressHandler, watchDevice, backupText, importBackup } from './engine.mjs';
+import { call, wooting, hidSupported, setProgressHandler, watchDevice, backupText, importBackup, diagnostics } from './engine.mjs';
 import {encodeMacroEvents} from './macro.mjs';
 
 const $ = id => document.getElementById(id);
@@ -326,7 +326,7 @@ async function refresh(initial=false,load=false) {
     const data=await request(initial?'/api/state':'/api/state?full=1',undefined,{prompt:!initial});updateDevice(data);
     if((load||(initial&&!Object.keys(editor).length))&&state.connected){if(Object.keys(editor).length)recordHistory();editor=liveSettings(state);activeId=null;activeProfileNative=nativeFromState(state);$('include-native').checked=!!activeProfileNative;losses=[];source='Зчитано з RT80';$('profile-name').value='Мій RT80';renderLibrary();syncControls();}
     status(state.connected?`RT80 підключено. Апаратний профіль ${Number(state.profile)+1} · режим ${state.mode}. ${load?'Поточні параметри зчитано в редактор.':initial?'Кожна функція записується своєю кнопкою застосування.':'Стан оновлено; редактор збережено. Щоб замінити його поточними параметрами, натисни «Зчитати RT80».'}`:'Клавіатура недоступна. Можна редагувати та імпортувати локальні профілі.',state.connected?'success':'');
-  } catch(error){state=null;$('connect').hidden=false;$('device-led').classList.remove('connected');$('side-status').textContent='Немає з’єднання';for(const feature of ['rgb','remap','advanced']){const badge=document.querySelector(`[data-tab="${feature}"] .nav-lock`);if(badge){badge.textContent='?';badge.setAttribute('aria-label','Не підтверджено');}}initial&&hidSupported()?status('Підключи RT80 кабелем USB і натисни «Підключити». Без клавіатури можна редагувати та імпортувати профілі.',''):status(hidSupported()?`Немає з’єднання з RT80: ${error.message}`:error.message,'error');}
+  } catch(error){state=null;$('connect').hidden=false;$('device-led').classList.remove('connected');$('side-status').textContent='Немає з’єднання';for(const feature of ['rgb','remap','advanced']){const badge=document.querySelector(`[data-tab="${feature}"] .nav-lock`);if(badge){badge.textContent='?';badge.setAttribute('aria-label','Не підтверджено');}}initial&&hidSupported()?status('Підключи RT80 кабелем USB і натисни «Підключити». Без клавіатури можна редагувати та імпортувати профілі.',''):status(hidSupported()?`Немає з’єднання з RT80: ${error.message} Не виходить? Довідка → «Скопіювати діагностику».`:error.message,'error');}
   finally{$('refresh').disabled=false;renderEditor();}
 }
 rows.forEach((row,r)=>{let column=1;row.forEach(([label,hid,width])=>{
@@ -352,6 +352,7 @@ $('undo').addEventListener('click',()=>{if(!history.length)return;redoHistory.pu
 $('redo').addEventListener('click',()=>{if(!redoHistory.length)return;history.push(snapshot());restoreSnapshot(redoHistory.pop());status('Зміни редактора повторено.');});
 $('refresh').addEventListener('click',()=>refresh());
 $('connect').addEventListener('click',()=>refresh());
+$('copy-diagnostics').addEventListener('click',async()=>{const text=await diagnostics();try{await navigator.clipboard.writeText(text);status('Діагностику скопійовано. Встав її в повідомлення автору.','success');}catch{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type:'text/plain'}));a.download='keyboard-studio-diagnostics.txt';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);status('Діагностику збережено як файл. Надішли його автору.','success');}});
 $('download-backup').addEventListener('click',()=>{const name=$('backups').value,text=backupText(name);if(!text)return;const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type:'application/json'}));a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);});
 $('import-backup').addEventListener('click',()=>$('backup-input').click());
 $('backup-input').addEventListener('change',async()=>{const file=$('backup-input').files[0];$('backup-input').value='';if(!file||file.size>2_000_000)return;try{const name=importBackup(await file.text());$('backups').add(new Option(name,name));$('backups').value=name;$('restore').disabled=!state?.connected;status('Резервну копію додано до цього браузера.','success');}catch(error){status(`Не вдалося додати копію: ${error.message}`,'error');}});

@@ -4,13 +4,13 @@ export const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 // 64 data bytes; the checksum goes at index cb and overwrites that byte (as in hardware.ps1, where it was packet[cb+1]).
 export function frame(data,cb=7){const d=new Uint8Array(64);d.set(data);let s=0;for(let i=0;i<cb;i++)s+=d[i];d[cb]=255-(s&255);return d;}
 const bad=(list,max=255)=>list.some(b=>!Number.isInteger(b)||b<0||b>max);
-export function createDevice(link,{report=()=>{},delay=sleep}={}){
+export function createDevice(link,{report=()=>{},delay=sleep,trace=()=>{}}={}){
   const P={done:0,total:0,base:0,span:100,phase:'Читаю клавіатуру'};
   const say=(pct,text)=>report(Math.max(0,Math.min(100,Math.round(pct))),text);
   async function send(data,cb=7,wait=12){
-    const d=frame(data,cb);
+    const d=frame(data,cb);trace('tx',d);
     // The RT80 sometimes drops a feature report under load; the same packet is safe to resend.
-    for(let t=1;t<=4;t++){try{await link.sendFeature(d);break;}catch(e){if(t===4)throw e;await delay(30*t);}}
+    for(let t=1;t<=4;t++){try{await link.sendFeature(d);break;}catch(e){trace('retry',[t]);if(t===4)throw e;await delay(30*t);}}
     await delay(wait);
   }
   async function read(data,echo=false){
@@ -20,6 +20,7 @@ export function createDevice(link,{report=()=>{},delay=sleep}={}){
       await send(data,7,5);
       try{reply=await link.getFeature();break;}catch(e){if(t===4)throw e;await delay(30*t);}
     }
+    trace('rx',reply);
     if(echo&&reply[0]!==data[0])throw new Error('Клавіатура повернула неочікувану відповідь. Закрий інші конфігуратори та повтори.');
     return Array.from(reply);
   }

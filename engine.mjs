@@ -12,7 +12,18 @@ import {buildMainLed} from './options.mjs';
 import {macroReferences,planMacros} from './macro.mjs';
 import {createDevice} from './hid.mjs';
 
-const FILTERS=[{vendorId:0x3151,productId:0x4035},{vendorId:0x3151,productId:0x5009}];
+// Any 0x3151 (YUNZII) device is offered, so a friend with another model can still connect and send a log. Writes stay locked to RT80 (model 2068) in hid.mjs.
+const FILTERS=[{vendorId:0x3151}];
+
+// ---- diagnostics: a small in-memory log the user can copy and send; nothing is uploaded ----
+const LOG=[];
+export function log(kind,text){LOG.push(`${new Date().toISOString().slice(11,23)} ${kind} ${text}`);if(LOG.length>800)LOG.shift();}
+const hex=a=>Array.from(a.slice(0,16),b=>b.toString(16).padStart(2,'0')).join(' ');
+const describe=d=>`${d.productName||'?'} vid=${d.vendorId.toString(16)} pid=${d.productId.toString(16)} opened=${d.opened} collections=[${d.collections.map(c=>`usagePage=${c.usagePage.toString(16)} usage=${c.usage.toString(16)} feature=[${(c.featureReports||[]).map(r=>`id${r.reportId}:${(r.items||[]).reduce((n,i)=>n+i.reportSize*i.reportCount,0)/8}B`).join(',')}] in=${(c.inputReports||[]).length} out=${(c.outputReports||[]).length}`).join(' | ')}]`;
+export async function diagnostics(){
+  const granted=hidSupported()?await navigator.hid.getDevices().catch(()=>[]):[];
+  return ['Keyboard Studio diagnostics',`time: ${new Date().toISOString()}`,`browser: ${navigator.userAgent}`,`webhid: ${hidSupported()} secureContext: ${isSecureContext}`,`granted devices: ${granted.length?'':'none'}`,...granted.map(d=>'  '+describe(d)),`connected: ${dev?describe(dev):'no'}`,'--- log (tx/rx = first 16 bytes of each 64-byte feature report) ---',...LOG].join('\n');
+}
 export const hidSupported=()=>typeof navigator!=='undefined'&&!!navigator.hid;
 let hid=null,dev=null,onProgress=()=>{},lastAll=null,prog={step:1,steps:1};
 export const setProgressHandler=fn=>{onProgress=fn;};
@@ -28,17 +39,18 @@ export async function connect(prompt){
   let list=(await navigator.hid.getDevices()).filter(d=>d.vendorId===0x3151);
   if(!list.some(hasConfig)&&prompt)list=await navigator.hid.requestDevice({filters:FILTERS});
   const d=list.find(hasConfig);
+  log('connect',`candidates: ${list.length?list.map(describe).join(' ; '):'none'}`);
   if(!d)throw new Error(list.length?'Вибрано не той інтерфейс клавіатури. Натисни «Підключити» та вибери інший запис RT80 у списку.':'Клавіатуру не підключено. Натисни «Підключити», вибери RT80 і дозволь доступ.');
   if(!d.opened)await d.open();
-  dev=d;lastAll=null;
+  dev=d;lastAll=null;log('connect',`opened ${describe(d)}`);
   hid=createDevice({
     sendFeature:data=>dev.sendFeatureReport(0,data),
     getFeature:async()=>{const v=await timeout(dev.receiveFeatureReport(0),4000);const a=new Uint8Array(v.buffer,v.byteOffset,v.byteLength);return a.length===65?a.slice(1):a;}
-  },{report});
+  },{report,trace:(k,b)=>log(k,hex(b))});
 }
 export function watchDevice(onChange){
   if(!hidSupported())return;
-  navigator.hid.addEventListener('disconnect',e=>{if(e.device===dev){dev=null;hid=null;onChange();}});
+  navigator.hid.addEventListener('disconnect',e=>{log('event','disconnect');if(e.device===dev){dev=null;hid=null;onChange();}});
   navigator.hid.addEventListener('connect',e=>{if(e.device.vendorId===0x3151)onChange();});
 }
 
@@ -108,7 +120,11 @@ async function writeVerified(before,changes,mode,remaps=[],lighting=null,sleep=n
 }
 
 const WRITES=['/api/apply','/api/advanced','/api/binding','/api/remap','/api/rgb','/api/travel-extras','/api/led','/api/picture','/api/fn','/api/side','/api/sleep','/api/restore'];
-export async function call(url,data,{prompt=false}={}){
+export async function call(url,data,opts){
+  log('call',url);
+  try{return await run(url,data,opts);}catch(e){log('error',`${url}: ${e.message}`);throw e;}
+}
+async function run(url,data,{prompt=false}={}){
   const u=new URL(url,'http://x'),path=u.pathname;
   await connect(prompt);
   if(path==='/api/state')return exclusive(async()=>state(await device({action:'read',full:u.searchParams.get('full')==='1'})));
