@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {frame,createDevice} from '../hid.mjs';
+import {frame,createDevice,czFrame} from '../hid.mjs';
 import {validateSnapshot} from '../protocol.mjs';
 
 // A fake RT80: answers the read commands from tables, applies write commands, and checks every frame it receives.
@@ -85,4 +85,11 @@ test('a dropped reply is retried',async()=>{
   k.link.getFeature=()=>fails-->0?Promise.reject(new Error('lost')):real();
   const s=await createDevice(k.link,quick).readState();
   assert.equal(s.modelId,2068);
+});
+
+test('czFrame matches the vendor driver layout',()=>{
+  const f=czFrame(3,56);
+  assert.deepEqual(Array.from(f.slice(0,8)),[0x55,3,0,56,56,0,0,0]);
+  const w=czFrame(5,0,300,[1,2]);
+  assert.deepEqual(Array.from(w.slice(0,10)),[0x55,5,0,(2+44+1+0+1+2)&255,2,44,1,0,1,2]);
 });

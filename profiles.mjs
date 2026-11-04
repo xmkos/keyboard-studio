@@ -1,10 +1,10 @@
-import {MATRIX,validateSnapshot,buildAdvancedChanges,buildTravelExtras} from './protocol.mjs';
-import {encodeMainLightSetting} from './rgb.mjs';
-import {buildSleep} from './sleep.mjs';
-import {planMacros} from './macro.mjs';
-import {buildSide} from './side.mjs';
-import {buildRemap} from './remap.mjs';
-import {buildAdvancedBindingPlan,packedDksActions,rawDksTravel,rawModTapTime} from './advanced-bindings.mjs';
+import {MATRIX,validateSnapshot,buildAdvancedChanges,buildTravelExtras} from './protocol.mjs?v=mw24ql7j';
+import {encodeMainLightSetting} from './rgb.mjs?v=mw24ql7j';
+import {buildSleep} from './sleep.mjs?v=mw24ql7j';
+import {planMacros} from './macro.mjs?v=mw24ql7j';
+import {buildSide} from './side.mjs?v=mw24ql7j';
+import {buildRemap} from './remap.mjs?v=mw24ql7j';
+import {buildAdvancedBindingPlan,packedDksActions,rawDksTravel,rawModTapTime} from './advanced-bindings.mjs?v=mw24ql7j';
 
 const MATRIX_POSITIONS=90;
 const MODES=new Set(['normal','snap','toggleHold','toggleRepeat','dks','modTap']);

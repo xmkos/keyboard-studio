@@ -10,7 +10,7 @@ Browser app (WebHID). It edits a YUNZII RT80 keyboard (model 2068) over USB HID.
 ## Files
 - `engine.mjs`: what server.mjs used to do. `call(url,body)` keeps the old `/api/...` names (state, apply, remap, rgb, side, sleep, fn, led, picture, travel-extras, advanced, binding, slot, restore); also WebHID connect, browser backups (localStorage `ks-backup:<name>`), Wooting fetch. Writes make a backup and read back.
 - `hid.mjs`: RT80 HID protocol over a link `{sendFeature,getFeature}` (port of hardware.ps1: frames, retries, waits). Tested with a fake keyboard in `tests/hid.test.mjs`.
-- `engine.mjs`: static file server only.
+- `server.mjs`: static file server only.
 - `protocol.mjs`, `wooting.mjs`: protocol frames, Wooting profile import.
 - `rgb.mjs`, `side.mjs`, `sleep.mjs`, `picture.mjs`, `options.mjs`, `remap.mjs`, `macro.mjs`, `advanced-bindings.mjs`: one builder per feature. Each has a test in `tests/`.
 - `profiles.mjs`: native profile validation.

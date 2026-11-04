@@ -1,4 +1,4 @@
-import {MATRIX} from './protocol.mjs';
+import {MATRIX} from './protocol.mjs?v=mw24ql7j';
 export function macroReferences(snapshot){
  if(!Array.isArray(snapshot.allKeymaps)||snapshot.allKeymaps.length!==20||!snapshot.fnmap)throw new Error('Усі шари та Fn мають бути зчитані для перевірки макросів.');
  const refs=new Map();const scan=(map,scope)=>{if(!Array.isArray(map)||map.length!==512)throw new Error('Пошкоджений шар призначень.');for(let pos=0;pos<90;pos++)if(map[pos*4]===9){const id=map[pos*4+2];if(!refs.has(id))refs.set(id,[]);refs.get(id).push({scope,pos});}};

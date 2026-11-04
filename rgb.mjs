@@ -1,4 +1,4 @@
-import {MATRIX} from './protocol.mjs';
+import {MATRIX} from './protocol.mjs?v=mw24ql7j';
 
 const LIGHT_LIST = Object.freeze({
   LightOff: 0, LightAlwaysOn: 1, LightBreath: 2, LightNeon: 3, LightWave: 4,

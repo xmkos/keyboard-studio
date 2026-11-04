@@ -1,4 +1,4 @@
-import {MATRIX,validateSnapshot} from './protocol.mjs';
+import {MATRIX,validateSnapshot} from './protocol.mjs?v=mw24ql7j';
 
 // GearHub's configToMatrix at index-bundle offset 1866266 encodes a normal
 // mapping as [0,0,targetHid,0]. GET 137 returns eight 64-byte pages; the first

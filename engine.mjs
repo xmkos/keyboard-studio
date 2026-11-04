@@ -10,7 +10,7 @@ import {buildSide} from './side.mjs';
 import {buildPicture} from './picture.mjs';
 import {buildMainLed} from './options.mjs';
 import {macroReferences,planMacros} from './macro.mjs';
-import {createDevice} from './hid.mjs';
+import {createDevice,czFrame} from './hid.mjs';
 
 // Any 0x3151 (YUNZII) device is offered, so a friend with another model can still connect and send a log. Writes stay locked to RT80 (model 2068) in hid.mjs.
 const FILTERS=[{vendorId:0x3151}];
@@ -50,6 +50,16 @@ export async function connect(prompt){
 }
 // Read-only look at any HID device (any brand): descriptor layout plus a GET_FEATURE of each listed report. Nothing is written.
 const reportInfo=r=>`id${r.reportId}[${(r.items||[]).map(i=>`up=${(i.usagePage||0).toString(16)} u=${(i.usages||[]).slice(0,4).map(u=>u.toString(16)).join('/')} ${i.reportSize}x${i.reportCount}`).join('; ')}]`;
+// Read-only probe for the MCHOSE family (vid 0x41e4, 64-byte reports on usagePage 1 / usage 0). Sends only the two read commands the vendor driver uses for info (3, 4); no writes.
+const hexAll=a=>Array.from(a,b=>b.toString(16).padStart(2,'0')).join(' ');
+async function probeMchose(d){
+  for(const [name,cmd] of [['info',3],['base',4]]){
+    const reply=new Promise(res=>{const on=e=>{d.removeEventListener('inputreport',on);clearTimeout(t);res(e);};const t=setTimeout(()=>{d.removeEventListener('inputreport',on);res(null);},1500);d.addEventListener('inputreport',on);});
+    try{await d.sendReport(0,czFrame(cmd,56));}catch(e){log('probe',`${name} send failed: ${e.message}`);continue;}
+    const e=await reply;
+    log('probe',`${name} (cmd ${cmd}) reply: ${e?hexAll(new Uint8Array(e.data.buffer,e.data.byteOffset,e.data.byteLength)):'none within 1.5s'}`);
+  }
+}
 export async function inspect(){
   if(!hidSupported())throw new Error('Цей браузер не вміє працювати з USB HID. Відкрий сторінку в Chrome або Edge на комп’ютері.');
   let picked=[];
@@ -66,6 +76,7 @@ export async function inspect(){
         catch(e){log('inspect',`GET_FEATURE id${r.reportId} failed: ${e.message}`);}
       }
     }
+    if(d.vendorId===0x41e4&&d.collections.some(c=>c.usagePage===1&&c.usage===0&&(c.outputReports||[]).length))await probeMchose(d);
     if(!wasOpen)await d.close().catch(()=>{});
   }
   return diagnostics();

@@ -3,6 +3,8 @@
 export const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 // 64 data bytes; the checksum goes at index cb and overwrites that byte (as in hardware.ps1, where it was packet[cb+1]).
 export function frame(data,cb=7){const d=new Uint8Array(64);d.set(data);let s=0;for(let i=0;i<cb;i++)s+=d[i];d[cb]=255-(s&255);return d;}
+// MCHOSE/"Cizhou" frame, read from the vendor web driver (M HUB): [0x55,cmd,0,sum(o)&255,...o], o=[size,offsetLo,offsetHi,0,...data]. Replies start with 0xAA.
+export function czFrame(cmd,size,offset=0,data=[]){const o=[data.length||size,offset&255,offset>>8&255,0,...data],f=new Uint8Array(64);f.set([0x55,cmd,0,o.reduce((a,b)=>a+b,0)&255,...o]);return f;}
 const bad=(list,max=255)=>list.some(b=>!Number.isInteger(b)||b<0||b>max);
 export function createDevice(link,{report=()=>{},delay=sleep,trace=()=>{}}={}){
   const P={done:0,total:0,base:0,span:100,phase:'Читаю клавіатуру'};

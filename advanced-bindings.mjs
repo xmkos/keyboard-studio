@@ -1,4 +1,4 @@
-import {MATRIX, validateSnapshot} from './protocol.mjs';
+import {MATRIX, validateSnapshot} from './protocol.mjs?v=mw24ql7j';
 
 const MODE = Object.freeze({dks: 2, modTap: 3, toggleHold: 4, toggleRepeat: 5});
 
