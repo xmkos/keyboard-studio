@@ -1,0 +1,1 @@
+export function buildMainLed(current,on){if(!Array.isArray(current)||current.length!==3||!current.every(b=>Number.isInteger(b)&&b>=0&&b<=255)||typeof on!=='boolean')throw new Error('Стан підсвічування не зчитано або значення некоректне.');return [on?current[0]&~16:current[0]|16,...current.slice(1)];}

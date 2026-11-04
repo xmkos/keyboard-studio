@@ -1,0 +1,2 @@
+import {test} from 'node:test'; import assert from 'node:assert/strict'; import {buildSide} from '../side.mjs';
+test('side effect packet uses RT80 constraints and correct wire bytes',()=>{const before=[1,0,3,7,1,2,3];assert.deepEqual(buildSide(before,{effect:2,speed:3,brightness:4,dazzle:true,rgb:0xffffff}),[8,2,3,4,8,250,255,250]);assert.throws(()=>buildSide(before,{effect:2,speed:4,brightness:4,dazzle:true,rgb:0}));assert.throws(()=>buildSide(null,{effect:0,speed:0,brightness:0,dazzle:false,rgb:0}));});
