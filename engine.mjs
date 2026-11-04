@@ -1,17 +1,17 @@
 // Keyboard Studio engine: runs in the browser. WebHID talks to the keyboard, backups live in this browser.
 // It replaces the old Node server: app.mjs calls call(url, body) exactly as it used to fetch('/api/...').
-import {MATRIX,buildChanges,buildAdvancedChanges,buildTravelExtras,publicState,validateSnapshot} from './protocol.mjs';
-import {encodeMainLightSetting,decodeMainLightSetting} from './rgb.mjs';
-import {buildRemap,decodeRemaps} from './remap.mjs';
-import {buildNative} from './profiles.mjs';
-import {buildAdvancedBindingPlan} from './advanced-bindings.mjs';
-import {buildSleep} from './sleep.mjs';
-import {buildSide} from './side.mjs';
-import {buildPicture} from './picture.mjs';
-import {buildMainLed} from './options.mjs';
-import {macroReferences,planMacros} from './macro.mjs';
-import {createDevice,czFrame} from './hid.mjs';
-import {decodeMchose} from './mchose.mjs';
+import {MATRIX,buildChanges,buildAdvancedChanges,buildTravelExtras,publicState,validateSnapshot} from './protocol.mjs?v=mw27j5wi';
+import {encodeMainLightSetting,decodeMainLightSetting} from './rgb.mjs?v=mw27j5wi';
+import {buildRemap,decodeRemaps} from './remap.mjs?v=mw27j5wi';
+import {buildNative} from './profiles.mjs?v=mw27j5wi';
+import {buildAdvancedBindingPlan} from './advanced-bindings.mjs?v=mw27j5wi';
+import {buildSleep} from './sleep.mjs?v=mw27j5wi';
+import {buildSide} from './side.mjs?v=mw27j5wi';
+import {buildPicture} from './picture.mjs?v=mw27j5wi';
+import {buildMainLed} from './options.mjs?v=mw27j5wi';
+import {macroReferences,planMacros} from './macro.mjs?v=mw27j5wi';
+import {createDevice,czFrame} from './hid.mjs?v=mw27j5wi';
+import {decodeMchose} from './mchose.mjs?v=mw27j5wi';
 
 // Any 0x3151 (YUNZII) device is offered, so a friend with another model can still connect and send a log. Writes stay locked to RT80 (model 2068) in hid.mjs.
 const FILTERS=[{vendorId:0x3151}];
@@ -55,11 +55,13 @@ export async function connect(prompt){
   if(dev?.opened)return;
   const all=await navigator.hid.getDevices();
   let list=all.filter(d=>d.vendorId===0x3151);
-  if(!list.some(hasConfig)&&prompt){
+  if(!list.some(hasConfig)){
     // An already-granted MCHOSE keyboard opens without a picker; otherwise one picker offers RT80 and MCHOSE (only its config interface, usagePage 1 / usage 0).
     const m=all.find(isMchose);if(m)throw Object.assign(new Error('mchose'),{mchoseDevice:m});
-    list=await navigator.hid.requestDevice({filters:[...FILTERS,{vendorId:0x41e4,usagePage:1,usage:0}]});
-    const m2=list.find(isMchose);if(m2)throw Object.assign(new Error('mchose'),{mchoseDevice:m2});
+    if(prompt){
+      list=await navigator.hid.requestDevice({filters:[...FILTERS,{vendorId:0x41e4,usagePage:1,usage:0}]});
+      const m2=list.find(isMchose);if(m2)throw Object.assign(new Error('mchose'),{mchoseDevice:m2});
+    }
   }
   const d=list.find(hasConfig);
   log('connect',`candidates: ${list.length?list.map(describe).join(' ; '):'none'}`);
@@ -97,7 +99,46 @@ export async function czRead(d,cmd,offset,size){
   return {bytes:out};
 }
 let lastMchose=null,mdev=null;
+// ---- MCHOSE in the main UI: speaks the same /api/... names as the RT80 path, with a state of the same shape ----
+let mActive=0;
+const mrev=()=>revision({m:lastMchose,p:mActive});
+async function mchoseState(){
+  const d=decodeMchose(lastMchose),prof=d.profiles[mActive]||d.profiles[0],keys=[];
+  for(const k of prof.rows.flat())if(k.hid!==255&&k.travel&&k.index!==null)keys.push({hid:k.hid,index:0,pos:k.index,actuation:k.travel.actuation,rtEnabled:k.travel.keyMode===1,rtDown:k.travel.rtPress,rtUp:k.travel.rtRelease,deadzone:k.travel.pressDeadzone,option:0,modeName:'normal',snapPartnerHid:null,dksTravel:null,modTapMs:null,dksTriggers:null});
+  return {connected:true,device:{name:'MCHOSE Ace68-II',modelId:0,firmware:d.firmware},profile:mActive,mode:'custom',layout:'ace68',capabilities:{advanced:false,bindings:false,rgb:false,remap:false},keys,macros:{},options:null,picture:null,fnmap:null,side:null,sleep:null,rgb:null,remaps:[],revision:await mrev(),backups:mchoseBackups(mActive).map(k=>k.slice(MB.length)).reverse()};
+}
+async function mchoseCall(path,data,u){
+  if(path==='/api/state')return exclusive(async()=>{if(u.searchParams.get('full')==='1')lastMchose=await dumpMchose(mdev);return mchoseState();});
+  if(path==='/api/slot'){
+    if(!Number.isInteger(data.slot)||data.slot<0||data.slot>3)throw new Error('На цій клавіатурі 4 профілі (1–4).');
+    mActive=data.slot;return {state:await mchoseState(),backup:null};
+  }
+  if(path==='/api/apply'){
+    if(data.expectedRevision!==await mrev())throw new Error('Дані клавіатури змінилися. Натисни «Оновити» та переглянь зміни знову.');
+    const byHid=new Map(decodeMchose(lastMchose).profiles[mActive].rows.flat().map(k=>[k.hid,k])),items=[];
+    for(const c of data.changes||[]){
+      const k=byHid.get(c.hid);if(!k?.travel||k.index===null)throw new Error('Цієї клавіші немає на клавіатурі.');
+      const t=k.travel,patch={},diff=(a,b)=>typeof a==='number'&&Math.abs(a-b)>1e-9;
+      if(diff(c.actuation,t.actuation))patch.actuation=c.actuation;
+      if(typeof c.rtEnabled==='boolean'&&c.rtEnabled!==(t.keyMode===1))patch.keyMode=c.rtEnabled?1:0;
+      if(diff(c.rtDown,t.rtPress))patch.rtPress=c.rtDown;
+      if(diff(c.rtUp,t.rtRelease))patch.rtRelease=c.rtUp;
+      if(Object.keys(patch).length)items.push({index:k.index,patch});
+    }
+    if(!items.length)return {state:await mchoseState(),backup:null};
+    const r=await mchoseSetKeys(mActive,items);
+    return {state:await mchoseState(),backup:r.backup,orphaned:[]};
+  }
+  if(path==='/api/restore'){
+    if(!/^[0-3]:[\w-]+$/.test(data.backup||''))throw new Error('Некоректна назва резервної копії.');
+    const r=await mchoseRestore(Number(data.backup[0]),data.backup);mActive=Number(data.backup[0]);
+    return {state:await mchoseState(),backup:r.backup,orphaned:[]};
+  }
+  throw new Error('Для цієї клавіатури ця функція поки не підтримується.');
+}
+export const mchoseDecoded=()=>lastMchose?decodeMchose(lastMchose):null;
 export async function mchoseSession(d){
+  mActive=0;
   lastMchose=null;
   if(!d.opened)await d.open();
   log('connect','mchose '+describe(d));
@@ -202,10 +243,10 @@ export async function mchoseSetKeys(profile,items){
   });
 }
 export const mchoseSetActuation=(profile,keyIndex,mm)=>mchoseSetKeys(profile,[{index:keyIndex,patch:{actuation:mm}}]);
-export async function mchoseRestore(profile){
+export async function mchoseRestore(profile,backupName){
   return exclusive(async()=>{
     if(!mdev?.opened||!lastMchose)throw new Error('Спершу зчитай клавіатуру кнопкою «Інший бренд?».');
-    const name=mchoseBackups(profile).at(-1);
+    const name=backupName?MB+backupName:mchoseBackups(profile).at(-1);
     if(!name)throw new Error('Для цього профілю немає резервної копії.');
     const saved=JSON.parse(localStorage.getItem(name));
     if(saved.format!=='mchose-trigger-backup'||saved.profile!==profile||saved.bytes.length!==1024)throw new Error('Пошкоджена резервна копія.');
@@ -239,7 +280,7 @@ export async function inspect(){
 }
 export function watchDevice(onChange){
   if(!hidSupported())return;
-  navigator.hid.addEventListener('disconnect',e=>{log('event','disconnect');if(e.device===dev){dev=null;hid=null;onChange();}});
+  navigator.hid.addEventListener('disconnect',e=>{log('event','disconnect');if(e.device===dev){dev=null;hid=null;onChange();}if(e.device===mdev){mdev=null;lastMchose=null;onChange();}});
   navigator.hid.addEventListener('connect',e=>{if(e.device.vendorId===0x3151)onChange();});
 }
 
@@ -315,6 +356,7 @@ export async function call(url,data,opts){
 }
 async function run(url,data,{prompt=false}={}){
   const u=new URL(url,'http://x'),path=u.pathname;
+  if(mdev?.opened&&lastMchose)return mchoseCall(path,data,u);
   await connect(prompt);
   if(path==='/api/state')return exclusive(async()=>state(await device({action:'read',full:u.searchParams.get('full')==='1'})));
   if(path==='/api/slot')return exclusive(async()=>{

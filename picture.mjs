@@ -1,4 +1,4 @@
-import {MATRIX} from './protocol.mjs?v=mw24ql7j';
+import {MATRIX} from './protocol.mjs?v=mw27j5wi';
 export function buildPicture(current,settings){
  if(!Array.isArray(current)||current.length!==384||!current.every(v=>Number.isInteger(v)&&v>=0&&v<=255))throw new Error('Кольори клавіш не зчитано.');
  if(!settings||!Array.isArray(settings.hids)||!settings.hids.length||new Set(settings.hids).size!==settings.hids.length||!Number.isInteger(settings.rgb)||settings.rgb<0||settings.rgb>0xffffff)throw new Error('Некоректні кольори клавіш.');

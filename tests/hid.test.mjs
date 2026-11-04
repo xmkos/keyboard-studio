@@ -149,3 +149,35 @@ test('MCHOSE actuation write: backup, 56-byte window, verify, restore',async()=>
   assert.equal(back.mchose.profiles[1].rows.flat().find(k=>k.label==='W').travel.actuation,w.travel.actuation);
   Object.keys=keysOf;
 });
+
+test('MCHOSE speaks the main UI API: state, apply, slot, restore',async()=>{
+  const {readFileSync}=await import('node:fs');
+  const {parseDumpText}=await import('../mchose.mjs');
+  const eng=await import('../engine.mjs');
+  const regions=parseDumpText(readFileSync(new URL('./ace68ii-dump.txt',import.meta.url),'utf8'));
+  const mem=[];for(let p=0;p<4;p++)mem.push(...regions[`key-trigger profile${p}`]);
+  const original=mem.slice();let listeners=[];
+  const dev={opened:true,
+    addEventListener(n,f){listeners.push(f);},removeEventListener(n,f){listeners=listeners.filter(x=>x!==f);},
+    async sendReport(id,f){
+      const [cmd,size,lo,hi]=[f[1],f[4],f[5],f[6]],off=lo|hi<<8,r=new Uint8Array(64);
+      r.set([0xaa,cmd,0,0,size,lo,hi,0]);
+      if(cmd===160)for(let i=0;i<size;i++)r[8+i]=mem[off+i];else if(cmd===161)for(let i=0;i<size;i++)mem[off+i]=f[8+i];
+      queueMicrotask(()=>listeners.slice().forEach(l=>l({data:new DataView(r.buffer)})));
+    }};
+  eng.useMchoseDevice(dev,regions);
+  let st=await eng.call('/api/state');
+  assert.equal(st.layout,'ace68');assert.equal(st.keys.length,67);assert.equal(st.capabilities.rgb,false);
+  const slot=await eng.call('/api/slot',{slot:1,expectedRevision:st.revision});
+  assert.equal(slot.state.profile,1);
+  await assert.rejects(()=>eng.call('/api/slot',{slot:4}),/4 профілі/);
+  const w=slot.state.keys.find(k=>k.hid===26);
+  const res=await eng.call('/api/apply',{expectedProfile:1,expectedRevision:slot.state.revision,changes:[{hid:26,actuation:1.5,rtEnabled:false,rtDown:w.rtDown,rtUp:w.rtUp}]});
+  const w2=res.state.keys.find(k=>k.hid===26);
+  assert.equal(w2.actuation,1.5);assert.equal(w2.rtEnabled,false);assert.ok(res.backup);
+  await assert.rejects(()=>eng.call('/api/apply',{expectedRevision:'stale',changes:[]}),/змінилися/);
+  const back=await eng.call('/api/restore',{backup:res.backup,expectedRevision:res.state.revision});
+  assert.equal(back.state.keys.find(k=>k.hid===26).actuation,w.actuation);
+  assert.deepEqual(mem,original);
+  await assert.rejects(()=>eng.call('/api/rgb',{}),/не підтримується/);
+});

@@ -109,3 +109,8 @@
 .mchose-write label{display:flex;flex-direction:column;gap:4px;color:var(--muted);font-size:11px}
 .mchose-write select{background:#181a1b;color:#e9eaeb;border:1px solid #303437;border-radius:8px;padding:8px}
 .mchose-write input{width:100%;box-sizing:border-box}
+.keyboard[data-rows="5"]{grid-template-rows:repeat(5,47px)}
+@media(min-width:1600px){.keyboard[data-rows="5"]{grid-template-rows:repeat(5,54px)}}
+@media(max-width:1200px){.keyboard[data-rows="5"]{grid-template-rows:repeat(5,42px)}}
+@media(max-width:600px){.keyboard[data-rows="5"]{grid-template-rows:repeat(5,36px)}}
+.nav-device .connect-other:not([hidden]){display:inline-flex}

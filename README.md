@@ -2,6 +2,11 @@
 
 A browser app that edits a YUNZII RT80 keyboard (model 2068) over USB. It talks to the keyboard directly with **WebHID**, so there is no server, no tunnel and no driver. Everything runs on the page; nothing is sent anywhere.
 
+## Keyboards
+- **YUNZII RT80** (model 2068): full editor (actuation, Rapid Trigger, remap, RGB, Snap/DKS/Mod Tap, Fn, side RGB, timers, slots).
+- **MCHOSE Ace68-II** (USB 41e4:2116): the same editor for actuation, Rapid Trigger on/off and thresholds, profiles 1–4, undo/redo, profile library and Wooting import. Deadzones and the raw mode flag are in "Розширені налаштування Ace68-II". Remap, RGB, DKS/Mod Tap/Toggle and calibration are not supported yet. Read path confirmed against M HUB; actuation write confirmed on a real keyboard; the other fields use the same write path.
+- Anything else: "Інший бренд?" reads the device descriptor and shows text to send to the author.
+
 ## Use it
 - Open the page in **Chrome or Edge on a computer** (Firefox and Safari have no WebHID).
 - Plug the RT80 in by USB cable, close GearHub/QMK.top, press **Підключити**, pick the RT80 and allow access. The browser remembers the permission.
