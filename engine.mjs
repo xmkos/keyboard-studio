@@ -18,12 +18,27 @@ const FILTERS=[{vendorId:0x3151}];
 
 // ---- diagnostics: a small in-memory log the user can copy and send; nothing is uploaded ----
 const LOG=[];
-export function log(kind,text){LOG.push(`${new Date().toISOString().slice(11,23)} ${kind} ${text}`);if(LOG.length>800)LOG.shift();}
+// Errors, writes and connects also survive a reload (localStorage, last 150 lines) so a report can include what happened earlier.
+const KEEP=new Set(['error','write','connect','event','call']);
+let PREV=[];try{PREV=JSON.parse(localStorage.getItem('ks-log')||'[]').slice(-150);}catch{}
+const KEPT=[];let saveTimer=0;
+export function log(kind,text){
+  LOG.push(`${new Date().toISOString().slice(11,23)} ${kind} ${text}`);if(LOG.length>800)LOG.shift();
+  if(!KEEP.has(kind))return;
+  KEPT.push(`${new Date().toISOString()} ${kind} ${text}`.slice(0,400));if(KEPT.length>150)KEPT.shift();
+  clearTimeout(saveTimer);saveTimer=setTimeout(()=>{try{localStorage.setItem('ks-log',JSON.stringify([...PREV,...KEPT].slice(-150)));}catch{}},500);
+}
 const hex=a=>Array.from(a.slice(0,16),b=>b.toString(16).padStart(2,'0')).join(' ');
 const describe=d=>`${d.productName||'?'} vid=${d.vendorId.toString(16)} pid=${d.productId.toString(16)} opened=${d.opened} collections=[${d.collections.map(c=>`usagePage=${c.usagePage.toString(16)} usage=${c.usage.toString(16)} feature=[${(c.featureReports||[]).map(r=>`id${r.reportId}:${(r.items||[]).reduce((n,i)=>n+i.reportSize*i.reportCount,0)/8}B`).join(',')}] in=${(c.inputReports||[]).length} out=${(c.outputReports||[]).length}`).join(' | ')}]`;
 export async function diagnostics(){
   const granted=hidSupported()?await navigator.hid.getDevices().catch(()=>[]):[];
-  return ['Keyboard Studio diagnostics',`time: ${new Date().toISOString()}`,`browser: ${navigator.userAgent}`,`webhid: ${hidSupported()} secureContext: ${isSecureContext}`,`granted devices: ${granted.length?'':'none'}`,...granted.map(d=>'  '+describe(d)),`connected: ${dev?describe(dev):'no'}`,'--- log (tx/rx = first 16 bytes of each 64-byte feature report) ---',...LOG].join('\n');
+  return ['Keyboard Studio diagnostics',`time: ${new Date().toISOString()}`,`browser: ${navigator.userAgent}`,`webhid: ${hidSupported()} secureContext: ${isSecureContext}`,`granted devices: ${granted.length?'':'none'}`,...granted.map(d=>'  '+describe(d)),`connected: ${dev?describe(dev):'no'}`,...(PREV.length?['--- earlier sessions (errors, writes, connects) ---',...PREV]:[]),'--- log (tx/rx = first 16 bytes of each 64-byte feature report) ---',...LOG].join('\n');
+}
+// Short text for a GitHub issue link: header plus recent errors/writes, no raw dumps.
+export async function reportText(max=2800){
+  const head=(await diagnostics()).split('\n').slice(0,10);
+  const keep=LOG.filter(l=>/ (error|write|connect|inspect|probe) /.test(l)).slice(-25);
+  return [...head,'--- recent ---',...keep].join('\n').slice(0,max);
 }
 export const hidSupported=()=>typeof navigator!=='undefined'&&!!navigator.hid;
 let hid=null,dev=null,onProgress=()=>{},lastAll=null,prog={step:1,steps:1};
@@ -32,13 +47,20 @@ const setStep=(step,steps,text)=>{prog={step,steps};onProgress({busy:true,step,s
 const report=(pct,text)=>onProgress({busy:true,...prog,pct,text});
 
 const timeout=(p,ms)=>new Promise((res,rej)=>{const t=setTimeout(()=>rej(new Error('Клавіатура не відповіла вчасно.')),ms);p.then(v=>{clearTimeout(t);res(v);},e=>{clearTimeout(t);rej(e);});});
+const isMchose=d=>d.vendorId===0x41e4&&d.collections.some(c=>c.usagePage===1&&c.usage===0&&(c.outputReports||[]).length);
 const hasConfig=d=>d.collections.some(c=>c.featureReports?.length);
 // requestDevice needs a click, so only the Connect/Refresh buttons pass prompt=true; page load reuses an earlier grant.
 export async function connect(prompt){
   if(!hidSupported())throw new Error('Цей браузер не вміє працювати з USB HID. Відкрий сторінку в Chrome або Edge на комп’ютері.');
   if(dev?.opened)return;
-  let list=(await navigator.hid.getDevices()).filter(d=>d.vendorId===0x3151);
-  if(!list.some(hasConfig)&&prompt)list=await navigator.hid.requestDevice({filters:FILTERS});
+  const all=await navigator.hid.getDevices();
+  let list=all.filter(d=>d.vendorId===0x3151);
+  if(!list.some(hasConfig)&&prompt){
+    // An already-granted MCHOSE keyboard opens without a picker; otherwise one picker offers RT80 and MCHOSE (only its config interface, usagePage 1 / usage 0).
+    const m=all.find(isMchose);if(m)throw Object.assign(new Error('mchose'),{mchoseDevice:m});
+    list=await navigator.hid.requestDevice({filters:[...FILTERS,{vendorId:0x41e4,usagePage:1,usage:0}]});
+    const m2=list.find(isMchose);if(m2)throw Object.assign(new Error('mchose'),{mchoseDevice:m2});
+  }
   const d=list.find(hasConfig);
   log('connect',`candidates: ${list.length?list.map(describe).join(' ; '):'none'}`);
   if(!d)throw new Error(list.length?'Вибрано не той інтерфейс клавіатури. Натисни «Підключити» та вибери інший запис RT80 у списку.':'Клавіатуру не підключено. Натисни «Підключити», вибери RT80 і дозволь доступ.');
@@ -75,6 +97,15 @@ export async function czRead(d,cmd,offset,size){
   return {bytes:out};
 }
 let lastMchose=null,mdev=null;
+export async function mchoseSession(d){
+  lastMchose=null;
+  if(!d.opened)await d.open();
+  log('connect','mchose '+describe(d));
+  lastMchose=await dumpMchose(d);mdev=d;
+  const mchose=decodeMchose(lastMchose);
+  if(!mchose)throw new Error('Не вдалося розібрати дані клавіатури. Скопіюй діагностику й надішли автору.');
+  return {text:await diagnostics(),mchose};
+}
 export const useMchoseDevice=(d,regions)=>{mdev=d;if(regions)lastMchose=regions;};
 async function dumpMchose(d){
   const got={};
@@ -111,10 +142,12 @@ async function czWrite(d,cmd,offset,data){
 }
 // Writes every 8-byte key record that differs between oldB and newB (1024 bytes of one profile), each inside a 56-byte window of the new data.
 async function writeTrigger(d,profile,oldB,newB){
+  const done=new Set();
   for(let i=0;i<128;i++){
-    if(oldB.slice(i*8,i*8+8).every((b,j)=>b===newB[i*8+j]))continue;
+    if(done.has(i)||oldB.slice(i*8,i*8+8).every((b,j)=>b===newB[i*8+j]))continue;
     const start=Math.min(i*8,1024-56);
     await czWrite(d,161,1024*profile+start,newB.slice(start,start+56));
+    for(let k=start/8;k<start/8+7;k++)done.add(k);
     await new Promise(r=>setTimeout(r,30));
   }
 }
@@ -125,25 +158,50 @@ async function mchoseVerified(profile,expected){
   lastMchose[`key-trigger profile${profile}`]=after.bytes;
   return decodeMchose(lastMchose);
 }
-export async function mchoseSetActuation(profile,keyIndex,mm){
-  if(!Number.isInteger(profile)||profile<0||profile>3||!Number.isInteger(keyIndex)||keyIndex<0||keyIndex>79)throw new Error('Некоректна клавіша або профіль.');
-  if(typeof mm!=='number'||!(mm>=0.2&&mm<=3.5)||Math.abs(mm*100-Math.round(mm*100))>1e-6)throw new Error('Спрацювання: від 0,20 до 3,50 мм із кроком 0,01.');
+const rawMm=mm=>Math.round(mm*100)-1;
+const inRange=(v,lo,hi)=>typeof v==='number'&&v>=lo&&v<=hi&&Math.abs(v*100-Math.round(v*100))<1e-6;
+// Re-encodes one 8-byte key record with the changed fields; every other bit stays as read.
+export function encodeKeyPatch(rec,p){
+  const out=rec.slice();
+  if(p.actuation!==undefined){if(!inRange(p.actuation,0.2,3.5))throw new Error('Спрацювання: від 0,20 до 3,50 мм із кроком 0,01.');const v=rawMm(p.actuation);out[2]=v&255;out[3]=(out[3]&~1)|(v>>8&1);}
+  if(p.keyMode!==undefined){if(![0,1].includes(p.keyMode))throw new Error('Режим: 0 або 1.');out[1]=(out[1]&0xf0)|p.keyMode;}
+  for(const [lo,hi,rt,dz] of [[4,5,'rtPress','pressDeadzone'],[6,7,'rtRelease','releaseDeadzone']]){
+    let h=out[hi];
+    if(p[rt]!==undefined){if(!inRange(p[rt],0.01,3.5))throw new Error('RT: від 0,01 до 3,50 мм із кроком 0,01.');const v=rawMm(p[rt]);out[lo]=v&255;h=(h&~1)|(v>>8&1);}
+    if(p[dz]!==undefined){if(!inRange(p[dz],0,1))throw new Error('Мертва зона: від 0 до 1,00 мм із кроком 0,01.');h=(h&1)|(Math.round(p[dz]*100)<<1);}
+    out[hi]=h;
+  }
+  return out;
+}
+export async function mchoseSetKeys(profile,items){
+  if(!Number.isInteger(profile)||profile<0||profile>3)throw new Error('Некоректний профіль.');
+  if(!Array.isArray(items)||!items.length||items.length>80||new Set(items.map(i=>i.index)).size!==items.length)throw new Error('Вибери різні клавіші.');
+  for(const {index,patch} of items){
+    if(!Number.isInteger(index)||index<0||index>79||!patch||!Object.keys(patch).length)throw new Error('Некоректна клавіша або порожня зміна.');
+    encodeKeyPatch([0xa0,0,0,0,0,0,0,0],patch); // validates ranges before touching the keyboard
+  }
   return exclusive(async()=>{
-    if(!mdev?.opened||!lastMchose)throw new Error('Спершу зчитай клавіатуру кнопкою «Інший бренд?».');
+    if(!mdev?.opened||!lastMchose)throw new Error('Спершу підключи клавіатуру MCHOSE кнопкою «Підключити».');
     onProgress({busy:true,step:1,steps:3,pct:0,text:'Читаю профіль'});
     const cur=await trigRegion(profile);
     if(cur.error||cur.bytes.length!==1024)throw new Error('Не вдалося зчитати профіль перед записом.');
-    const rec=cur.bytes.slice(keyIndex*8,keyIndex*8+8);
-    if((rec[0]&0xf0)!==0xa0)throw new Error('Запис клавіші має невідомий формат. Запис заблоковано.');
-    const next=cur.bytes.slice(),v=Math.round(mm*100)-1;
-    next[keyIndex*8+2]=v&255;next[keyIndex*8+3]=(rec[3]&~1)|(v>>8&1);
+    const next=cur.bytes.slice(),lines=[];
+    for(const {index,patch} of items){
+      const rec=cur.bytes.slice(index*8,index*8+8);
+      if((rec[0]&0xf0)!==0xa0)throw new Error('Запис клавіші має невідомий формат. Запис заблоковано.');
+      const enc=encodeKeyPatch(rec,patch);next.splice(index*8,8,...enc);
+      lines.push(`key ${index} ${hexAll(rec)} -> ${hexAll(enc)}`);
+    }
+    if(next.every((b,i)=>b===cur.bytes[i]))return {backup:null,unchanged:true,mchose:decodeMchose(lastMchose)};
     onProgress({busy:true,step:2,steps:3,pct:0,text:'Створюю резервну копію'});
     const backup=saveMchoseBackup(profile,cur.bytes);
+    log('write',`profile ${profile+1} backup ${backup} patch ${JSON.stringify(items)}`);lines.forEach(l=>log('write',l));
     onProgress({busy:true,step:3,steps:3,pct:0,text:'Записую на клавіатуру'});
-    try{await writeTrigger(mdev,profile,cur.bytes,next);return {backup,mchose:await mchoseVerified(profile,next)};}
+    try{await writeTrigger(mdev,profile,cur.bytes,next);const mchose=await mchoseVerified(profile,next);log('write','verified OK');return {backup,mchose};}
     catch(e){log('error','mchose write: '+e.message);throw new Error(e.message+' Резервна копія: '+backup);}
   });
 }
+export const mchoseSetActuation=(profile,keyIndex,mm)=>mchoseSetKeys(profile,[{index:keyIndex,patch:{actuation:mm}}]);
 export async function mchoseRestore(profile){
   return exclusive(async()=>{
     if(!mdev?.opened||!lastMchose)throw new Error('Спершу зчитай клавіатуру кнопкою «Інший бренд?».');

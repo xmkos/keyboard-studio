@@ -1,7 +1,7 @@
 import { convertWootingProfile, parseWootingCode } from './wooting.mjs';
 import { RT80_LIGHT_EFFECTS } from './rgb.mjs';
 import { validateNative } from './profiles.mjs';
-import { call, wooting, hidSupported, setProgressHandler, watchDevice, backupText, importBackup, diagnostics, inspect, mchoseSetActuation, mchoseRestore } from './engine.mjs';
+import { call, wooting, hidSupported, setProgressHandler, watchDevice, backupText, importBackup, diagnostics, inspect, mchoseSession, mchoseSetKeys, mchoseRestore, reportText } from './engine.mjs';
 import {encodeMacroEvents} from './macro.mjs';
 
 const $ = id => document.getElementById(id);
@@ -326,7 +326,7 @@ async function refresh(initial=false,load=false) {
     const data=await request(initial?'/api/state':'/api/state?full=1',undefined,{prompt:!initial});updateDevice(data);
     if((load||(initial&&!Object.keys(editor).length))&&state.connected){if(Object.keys(editor).length)recordHistory();editor=liveSettings(state);activeId=null;activeProfileNative=nativeFromState(state);$('include-native').checked=!!activeProfileNative;losses=[];source='Зчитано з RT80';$('profile-name').value='Мій RT80';renderLibrary();syncControls();}
     status(state.connected?`RT80 підключено. Апаратний профіль ${Number(state.profile)+1} · режим ${state.mode}. ${load?'Поточні параметри зчитано в редактор.':initial?'Кожна функція записується своєю кнопкою застосування.':'Стан оновлено; редактор збережено. Щоб замінити його поточними параметрами, натисни «Зчитати RT80».'}`:'Клавіатура недоступна. Можна редагувати та імпортувати локальні профілі.',state.connected?'success':'');
-  } catch(error){state=null;$('connect').hidden=$('inspect-device').hidden=false;$('device-led').classList.remove('connected');$('side-status').textContent='Немає з’єднання';for(const feature of ['rgb','remap','advanced']){const badge=document.querySelector(`[data-tab="${feature}"] .nav-lock`);if(badge){badge.textContent='?';badge.setAttribute('aria-label','Не підтверджено');}}initial&&hidSupported()?status('Підключи RT80 кабелем USB і натисни «Підключити». Без клавіатури можна редагувати та імпортувати профілі.',''):status(hidSupported()?`Немає з’єднання з RT80: ${error.message} Не виходить? Довідка → «Скопіювати діагностику».`:error.message,'error');}
+  } catch(error){if(error.mchoseDevice){openMchose(error.mchoseDevice);return;}state=null;$('connect').hidden=$('inspect-device').hidden=false;$('device-led').classList.remove('connected');$('side-status').textContent='Немає з’єднання';for(const feature of ['rgb','remap','advanced']){const badge=document.querySelector(`[data-tab="${feature}"] .nav-lock`);if(badge){badge.textContent='?';badge.setAttribute('aria-label','Не підтверджено');}}initial&&hidSupported()?status('Підключи RT80 кабелем USB і натисни «Підключити». Без клавіатури можна редагувати та імпортувати профілі.',''):status(hidSupported()?`Немає з’єднання з RT80: ${error.message} Не виходить? Довідка → «Скопіювати діагностику».`:error.message,'error');}
   finally{$('refresh').disabled=false;renderEditor();}
 }
 rows.forEach((row,r)=>{let column=1;row.forEach(([label,hid,width])=>{
@@ -354,13 +354,22 @@ $('refresh').addEventListener('click',()=>refresh());
 $('connect').addEventListener('click',()=>refresh());
 let mchoseText='',mc=null;
 const mm2=v=>v.toFixed(2);
-function showMchose(d,text){mchoseText=text;mc={d,profile:0,key:null};$('mchose-write-status').textContent='';buildMchose();$('mchose-dialog').showModal();}
+const keyId=k=>k.hid+':'+k.label+':'+k.x;
+const FIELDS=[['actuation','mchose-act'],['rtPress','mchose-rtp'],['rtRelease','mchose-rtr'],['pressDeadzone','mchose-pdz'],['releaseDeadzone','mchose-rdz'],['keyMode','mchose-mode']];
+async function openMchose(d){
+  status('Читаю клавіатуру MCHOSE…');showProgress({step:1,steps:1,pct:0,text:'Читаю клавіатуру MCHOSE'});
+  try{const r=await mchoseSession(d);showMchose(r.mchose,r.text);status('Клавіатуру MCHOSE зчитано (бета).','success');}
+  catch(error){status(error.message,'error');}
+  finally{$('progress').hidden=true;}
+}
+function showMchose(d,text){mchoseText=text;mc={d,profile:0,sel:new Set(),base:{}};$('mchose-write-status').textContent='';buildMchose();$('mchose-dialog').showModal();}
+function selectedKeys(){return mc.d.profiles[mc.profile].rows.flat().filter(k=>mc.sel.has(keyId(k)));}
 function buildMchose(){
   const U=44,d=mc.d,box=$('mchose-profiles'),board=$('mchose-board'),detail=$('mchose-detail');
   $('mchose-meta').textContent='Прошивка '+d.firmware+(d.build?' · збірка '+d.build:'')+' · '+d.profiles.length+' профілі (номер активного профілю з даних не визначено)';
   board.style.width=16*U+'px';board.style.height=5*U+'px';
   box.replaceChildren();
-  d.profiles.forEach((p,i)=>{const b=document.createElement('button');b.type='button';b.textContent='Профіль '+(p.index+1);b.className=i===mc.profile?'button primary':'button subtle';b.addEventListener('click',()=>{mc.profile=i;mc.key=null;buildMchose();});box.append(b);});
+  d.profiles.forEach((p,i)=>{const b=document.createElement('button');b.type='button';b.textContent='Профіль '+(p.index+1);b.className=i===mc.profile?'button primary':'button subtle';b.addEventListener('click',()=>{mc.profile=i;mc.sel.clear();buildMchose();});box.append(b);});
   board.replaceChildren();
   d.profiles[mc.profile].rows.forEach((row,r)=>row.forEach(k=>{
     const el=document.createElement('button');el.type='button';el.className='mc-key';
@@ -368,27 +377,37 @@ function buildMchose(){
     const t=k.travel;el.style.setProperty('--t',t?Math.min(1,Math.max(0,(t.actuation-0.1)/3.9)):0);
     const label=document.createElement('b');label.textContent=k.label;const val=document.createElement('small');val.textContent=t?mm2(t.actuation):'–';
     el.append(label,val);
-    if(mc.key&&mc.key.hid===k.hid&&mc.key.label===k.label)el.classList.add('selected');
-    el.addEventListener('click',()=>{mc.key=k;buildMchose();});
+    if(mc.sel.has(keyId(k)))el.classList.add('selected');
+    el.addEventListener('click',()=>{const id=keyId(k);if(mc.sel.has(id))mc.sel.delete(id);else mc.sel.add(id);buildMchose();});
     board.append(el);
   }));
-  const k=mc.key,t=k?.travel;
-  detail.textContent=!k?'Натисни клавішу, щоб побачити її значення. Число на клавіші: глибина спрацювання, мм.':t?k.label+': спрацювання '+mm2(t.actuation)+' мм · RT натискання '+mm2(t.rtPress)+' / відпускання '+mm2(t.rtRelease)+' мм · мертва зона '+mm2(t.pressDeadzone)+' / '+mm2(t.releaseDeadzone)+' мм · режим '+t.keyMode+(t.keyMode===1?' (імовірно Rapid Trigger)':''):k.label+': даних немає';
-  $('mchose-act').disabled=$('mchose-apply').disabled=!t||k.index===null;
-  if(t)$('mchose-act').value=mm2(t.actuation);
+  const keys=selectedKeys(),k=keys[0],t=k?.travel,writable=keys.filter(x=>x.travel&&x.index!==null);
+  detail.textContent=!keys.length?'Натискай клавіші, щоб вибрати (можна кілька). Число на клавіші: глибина спрацювання, мм.':keys.length>1?'Вибрано клавіш: '+keys.length+'. Заповни поля, які треба змінити для всіх.':t?k.label+': спрацювання '+mm2(t.actuation)+' мм · RT натискання '+mm2(t.rtPress)+' / відпускання '+mm2(t.rtRelease)+' мм · мертва зона '+mm2(t.pressDeadzone)+' / '+mm2(t.releaseDeadzone)+' мм · режим '+t.keyMode+(t.keyMode===1?' (імовірно Rapid Trigger)':''):k.label+': даних немає';
+  mc.base={};
+  for(const [f,id] of FIELDS){const el=$(id);el.disabled=!writable.length;const v=keys.length===1&&t?String(t[f]):'';el.value=f==='keyMode'?v:(v===''?'':Number(v).toFixed(2));mc.base[f]=el.value;}
+  $('mchose-apply').disabled=!writable.length;
 }
 async function mchoseRun(label,fn){
   const buttons=['mchose-apply','mchose-restore'].map($);buttons.forEach(b=>b.disabled=true);$('mchose-write-status').textContent=label+'… Не відключай клавіатуру.';
-  try{const r=await fn();mc.d=r.mchose;buildMchose();$('mchose-write-status').textContent='Готово, значення перевірено. Резервна копія: '+r.backup;}
-  catch(error){$('mchose-write-status').textContent='Помилка: '+error.message;}
-  finally{$('mchose-restore').disabled=false;$('mchose-apply').disabled=$('mchose-act').disabled;}
+  try{const r=await fn();mc.d=r.mchose;buildMchose();$('mchose-write-status').textContent=r.unchanged?'Змін немає: значення вже такі.':'Готово, значення перевірено. Резервна копія: '+r.backup;}
+  catch(error){$('mchose-write-status').textContent='Помилка: '+error.message+' Можна скопіювати діагностику через «Надіслати дані автору».';buildMchose();}
+  finally{$('mchose-restore').disabled=false;}
 }
 $('mchose-write').addEventListener('submit',event=>{
-  event.preventDefault();if(!mc?.key)return;const mm=Number($('mchose-act').value);
-  if(!confirm('Записати спрацювання '+mm2(mm)+' мм для клавіші '+mc.key.label+' у профіль '+(mc.profile+1)+'? Перед записом буде створено резервну копію. Функція експериментальна.'))return;
-  mchoseRun('Записую',()=>mchoseSetActuation(mc.profile,mc.key.index,mm));
+  event.preventDefault();if(!mc)return;
+  const patch={};
+  for(const [f,id] of FIELDS){const v=$(id).value;if(v!==''&&v!==mc.base[f])patch[f]=Number(v);}
+  const keys=selectedKeys().filter(k=>k.travel&&k.index!==null);
+  if(!keys.length||!Object.keys(patch).length){$('mchose-write-status').textContent='Вибери клавіші й змін хоча б одне поле.';return;}
+  if(!confirm('Записати зміни ('+Object.keys(patch).length+' поле) для клавіш: '+keys.length+', профіль '+(mc.profile+1)+'? Перед записом буде створено резервну копію. Бета-функція.'))return;
+  mchoseRun('Записую',()=>mchoseSetKeys(mc.profile,keys.map(k=>({index:k.index,patch}))));
 });
-$('mchose-restore').addEventListener('click',()=>{if(!confirm('Відновити останню резервну копію профілю '+(mc.profile+1)+'? Значення профілю буде перезаписано.'))return;mchoseRun('Відновлюю',()=>mchoseRestore(mc.profile));});
+$('mchose-restore').addEventListener('click',()=>{if(!mc||!confirm('Відновити останню резервну копію профілю '+(mc.profile+1)+'? Значення профілю буде перезаписано.'))return;mchoseRun('Відновлюю',()=>mchoseRestore(mc.profile));});
+const pick=pred=>{if(!mc)return;mc.sel.clear();mc.d.profiles[mc.profile].rows.flat().filter(pred).forEach(k=>mc.sel.add(keyId(k)));buildMchose();};
+$('mchose-all').addEventListener('click',()=>pick(k=>k.travel&&k.index!==null));
+$('mchose-wasd').addEventListener('click',()=>pick(k=>['W','A','S','D'].includes(k.label)));
+$('mchose-clear').addEventListener('click',()=>pick(()=>false));
+$('share-issue').addEventListener('click',async()=>{const body='```\n'+await reportText(2200)+'\n```\n\nЩо робив і що пішло не так:\n';window.open('https://github.com/xmkos/keyboard-studio/issues/new?title='+encodeURIComponent('Звіт Keyboard Studio')+'&body='+encodeURIComponent(body),'_blank','noopener');});
 $('mchose-share').addEventListener('click',()=>{$('mchose-dialog').close();shareText(mchoseText);});
 $('mchose-close').addEventListener('click',()=>$('mchose-dialog').close());
 function shareText(text){$('share-text').value=text;$('share-copy').textContent='Скопіювати';$('share-dialog').showModal();$('share-text').select();}
@@ -592,5 +611,6 @@ window.addEventListener('blur',()=>document.querySelectorAll('.testing').forEach
 setProgressHandler(showProgress);
 watchDevice(()=>refresh(true));
 renderLibrary();renderEditor();updateOutputs();renderRgb();refresh(true);
+
 
 

@@ -25,3 +25,16 @@ test('a real Ace68-II dump decodes into 4 profiles with all keys mapped',()=>{
     for(const k of keys.filter(k=>k.travel))assert.ok(k.travel.actuation>=0.1&&k.travel.actuation<=4.5,`${k.label} actuation ${k.travel.actuation}`);
   }
 });
+
+test('encodeKeyPatch round-trips through decodeTrigger and keeps unknown bits',async()=>{
+  const {encodeKeyPatch}=await import('../engine.mjs');
+  const rec=[0xa0,0x01,0x71,0x00,0x1d,0x1e,0x1d,0x1e];
+  const out=encodeKeyPatch(rec,{actuation:3.5,rtPress:0.25,rtRelease:0.35,pressDeadzone:0.1,releaseDeadzone:0.2,keyMode:0});
+  const [k]=decodeTrigger(out);
+  assert.deepEqual(k,{switchType:0,keyMode:0,priority:0,actuation:3.5,rtPress:0.25,rtRelease:0.35,pressDeadzone:0.1,releaseDeadzone:0.2});
+  assert.equal(out[0],0xa0);
+  assert.deepEqual(encodeKeyPatch(rec,{}),rec);
+  assert.throws(()=>encodeKeyPatch(rec,{rtPress:0}),/RT/);
+  assert.throws(()=>encodeKeyPatch(rec,{pressDeadzone:2}),/Мертва/);
+  assert.throws(()=>encodeKeyPatch(rec,{keyMode:2}),/Режим/);
+});
