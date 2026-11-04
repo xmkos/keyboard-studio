@@ -50,14 +50,41 @@ export async function connect(prompt){
 }
 // Read-only look at any HID device (any brand): descriptor layout plus a GET_FEATURE of each listed report. Nothing is written.
 const reportInfo=r=>`id${r.reportId}[${(r.items||[]).map(i=>`up=${(i.usagePage||0).toString(16)} u=${(i.usages||[]).slice(0,4).map(u=>u.toString(16)).join('/')} ${i.reportSize}x${i.reportCount}`).join('; ')}]`;
-// Read-only probe for the MCHOSE family (vid 0x41e4, 64-byte reports on usagePage 1 / usage 0). Sends only the two read commands the vendor driver uses for info (3, 4); no writes.
+// Read-only dump for the MCHOSE family (vid 0x41e4, 64-byte reports on usagePage 1 / usage 0).
+// Only memory-read commands that the vendor web driver itself uses for reading: 3 info, 4 base, 5 func config, 8 key matrix, 160 key trigger (travel), 162 DKS, 164 MT, 166 TGL. No writes.
 const hexAll=a=>Array.from(a,b=>b.toString(16).padStart(2,'0')).join(' ');
-async function probeMchose(d){
-  for(const [name,cmd] of [['info',3],['base',4]]){
-    const reply=new Promise(res=>{const on=e=>{d.removeEventListener('inputreport',on);clearTimeout(t);res(e);};const t=setTimeout(()=>{d.removeEventListener('inputreport',on);res(null);},1500);d.addEventListener('inputreport',on);});
-    try{await d.sendReport(0,czFrame(cmd,56));}catch(e){log('probe',`${name} send failed: ${e.message}`);continue;}
-    const e=await reply;
-    log('probe',`${name} (cmd ${cmd}) reply: ${e?hexAll(new Uint8Array(e.data.buffer,e.data.byteOffset,e.data.byteLength)):'none within 1.5s'}`);
+function exchange(d,frame,cmd,ms=1500){
+  return new Promise(res=>{
+    const done=v=>{clearTimeout(t);d.removeEventListener('inputreport',on);res(v);};
+    const on=e=>{const u=new Uint8Array(e.data.buffer,e.data.byteOffset,e.data.byteLength);if(u[0]===0xaa&&u[1]===cmd)done(u);};
+    const t=setTimeout(()=>done(null),ms);
+    d.addEventListener('inputreport',on);
+    d.sendReport(0,frame).catch(e=>{log('dump',`send failed: ${e.message}`);done(null);});
+  });
+}
+export async function czRead(d,cmd,offset,size){
+  const out=[];
+  for(let o=0;o<size;o+=56){
+    const n=Math.min(56,size-o);
+    let u=await exchange(d,czFrame(cmd,n,offset+o),cmd);
+    if(!u)u=await exchange(d,czFrame(cmd,n,offset+o),cmd);
+    if(!u)return {bytes:out,error:`no reply at offset ${offset+o}`};
+    out.push(...u.slice(8,8+Math.min(n,u[4])));
+  }
+  return {bytes:out};
+}
+async function dumpMchose(d){
+  const regions=[['info',3,0,56],['base',4,0,56]];
+  for(let p=0;p<5;p++)regions.push([`func-config profile${p}`,5,64*p,64]);
+  for(let p=0;p<5;p++)regions.push([`key-trigger profile${p}`,160,1024*p,1024]);
+  for(let i=0;i<20;i++)regions.push([`key-matrix layer${i}`,8,512*i,240]);
+  for(let p=0;p<5;p++)regions.push([`dks profile${p}`,162,768*p,768],[`mt profile${p}`,164,256*p,256],[`tgl profile${p}`,166,128*p,128]);
+  let bad=0;
+  for(const [i,[name,cmd,off,size]] of regions.entries()){
+    onProgress({busy:true,step:1,steps:1,pct:Math.round(100*i/regions.length),text:`Читаю клавіатуру: ${name}`});
+    const r=await czRead(d,cmd,off,size);
+    log('dump',`${name} (cmd ${cmd} off ${off} size ${size}) got ${r.bytes.length}${r.error?` ERROR ${r.error}`:''}: ${hexAll(r.bytes)}`);
+    if(r.error&&++bad>=4){log('dump','stopped: too many regions without reply');break;}
   }
 }
 export async function inspect(){
@@ -76,7 +103,7 @@ export async function inspect(){
         catch(e){log('inspect',`GET_FEATURE id${r.reportId} failed: ${e.message}`);}
       }
     }
-    if(d.vendorId===0x41e4&&d.collections.some(c=>c.usagePage===1&&c.usage===0&&(c.outputReports||[]).length))await probeMchose(d);
+    if(d.vendorId===0x41e4&&d.collections.some(c=>c.usagePage===1&&c.usage===0&&(c.outputReports||[]).length))await dumpMchose(d);
     if(!wasOpen)await d.close().catch(()=>{});
   }
   return diagnostics();

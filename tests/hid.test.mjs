@@ -93,3 +93,22 @@ test('czFrame matches the vendor driver layout',()=>{
   const w=czFrame(5,0,300,[1,2]);
   assert.deepEqual(Array.from(w.slice(0,10)),[0x55,5,0,(2+44+1+0+1+2)&255,2,44,1,0,1,2]);
 });
+
+test('czRead reads a region in 56-byte chunks and retries a lost reply',async()=>{
+  const {czRead}=await import('../engine.mjs');
+  const byteAt=(cmd,o)=>(cmd*7+o)&255;let listeners=[],drop=1;
+  const dev={
+    addEventListener(n,f){listeners.push(f);},removeEventListener(n,f){listeners=listeners.filter(x=>x!==f);},
+    async sendReport(id,f){
+      assert.equal(id,0);assert.equal(f[0],0x55);
+      const [cmd,size,lo,hi]=[f[1],f[4],f[5],f[6]],offset=lo|hi<<8;
+      assert.equal(f[3],(size+lo+hi)&255);
+      if(drop-->0)return;
+      const r=new Uint8Array(64);r.set([0xaa,cmd,0,0,size,lo,hi,0]);for(let i=0;i<size;i++)r[8+i]=byteAt(cmd,offset+i);
+      queueMicrotask(()=>listeners.slice().forEach(l=>l({data:new DataView(r.buffer)})));
+    }
+  };
+  const r=await czRead(dev,160,1024,130);
+  assert.equal(r.error,undefined);assert.equal(r.bytes.length,130);
+  assert.deepEqual(r.bytes,Array.from({length:130},(_,i)=>byteAt(160,1024+i)));
+});
